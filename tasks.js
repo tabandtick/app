@@ -1,5 +1,7 @@
 var CLIENT_ID = '146982777170-h1btpb05ltctf58n4f9foqof665i08j7.apps.googleusercontent.com';
 var SCOPES = ['https://www.googleapis.com/auth/tasks'];
+// The signed-in user's own default list.
+var TASK_LIST = '@default';
 
 function checkAuth() {
   gapi.auth.authorize(
@@ -33,7 +35,7 @@ function loadTasksApi() {
 
 function listTaskLists() {
     var request = gapi.client.tasks.tasks.list({
-            'tasklist': "MDE0Mjk2ODUyMzczMTQwMjg5Mjg6MDow"
+            'tasklist': TASK_LIST
           });
 
           request.execute(function(resp) {
@@ -54,8 +56,8 @@ function listTaskLists() {
 
 function completeTask(completedID, gAPI, task) {
   gapi.client.request({
-      path: 'https://www.googleapis.com/tasks/v1/lists/' + "MDE0Mjk2ODUyMzczMTQwMjg5Mjg6MDow" + '/tasks/' + completedID,
-      method: 'PUT',
+      path: 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks/' + completedID,
+      method: 'PATCH',
       body:
           {
             id: completedID,
@@ -66,26 +68,27 @@ function completeTask(completedID, gAPI, task) {
 
 function uncompleteTask(uncompletedID, gAPI, task) {
   gapi.client.request({
-      path: 'https://www.googleapis.com/tasks/v1/lists/' + "MDE0Mjk2ODUyMzczMTQwMjg5Mjg6MDow" + '/tasks/' + uncompletedID,
-      method: 'PUT',
+      path: 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks/' + uncompletedID,
+      method: 'PATCH',
       body:
           {
             id: uncompletedID,
-            status: 'needsAction'
+            status: 'needsAction',
+            completed: null
           }
   }).execute();
 }
 
 function deleteTask(deletedID, gAPI, task) {
   gapi.client.request({
-      path: 'https://www.googleapis.com/tasks/v1/lists/' + "MDE0Mjk2ODUyMzczMTQwMjg5Mjg6MDow" + '/tasks/' + deletedID,
+      path: 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks/' + deletedID,
       method: 'DELETE'
   }).execute();
 }
 
 function insertTask(gAPI, task) {
   gapi.client.request({
-      path: 'https://www.googleapis.com/tasks/v1/lists/' + "MDE0Mjk2ODUyMzczMTQwMjg5Mjg6MDow" + '/tasks',
+      path: 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks',
       method: 'POST',
       body:
           {
