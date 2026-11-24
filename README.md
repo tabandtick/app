@@ -1,70 +1,49 @@
 # MyTo.Do
 
-A simple and intuitive to-do list that integrates with Google Tasks.
+A simple to-do list for Google Tasks: https://mytodo.github.io/MyTo.Do/
 
-## Features
-- Tasks
-  - Displays tasks from one specified task list
-- Checkboxes
-- Displays tasks' checkboxes from one specified task list
-- Buttons
-  - New Task
-    - Adds a new task to top of list
-    - View only updates upon refresh
-  - Edit Task
-    - No function
-  - Delete Task
-    - Deletes the first task and removes from view
-- Keys
-  - Enter
-    - Appears to create a new task on view
-    - Doesn't create a new task
-  - Backspace
-    - Deletes current task when cursor is at [0]
-    - Doesn't edit task
-    - Subtasks of a deleted task go to bottom upon refresh
-  - Delete
-    - Deletes next task when cursor is at end
-    - Doesn't edit task
-    - Subtasks of a deleted task go to bottom upon refresh
+It is a static page with no server or build step. It signs in with Google and
+works on your default task list.
 
-## Required
-- Node
+## Using it
 
-## Setup Instructions
-- npm install
-- Type `node server` to run the application
-- Terminal will instruct that server runs at: http://0.0.0.0:8080, but you must view from http://localhost:8080/. Why? See [here](https://stackoverflow.com/questions/32041418/google-sign-in-website-error-permission-denied-to-generate-login-hint-for-targ).
-- Login
+- **New Task** adds a task at the top. It is saved once it has a title.
+- **Typing** in a row edits its title, and saves shortly after you stop.
+- **The tick box** completes or reopens a task.
+- **Delete Task** deletes the task you last clicked, marked with a blue bar.
+- **Enter** splits a row into two tasks.
+- **Backspace** at the start of a row joins it to the one above.
+- **Delete** at the end of a row joins the next one to it.
+- **Up and down arrows** move between rows.
 
-## Task Data
-Each task comes with the following data attributes:
+Deleting and joining can be undone for 7 seconds. Google is only told to delete
+anything once that time is up, or when the page closes.
 
-{
-  "kind": "tasks#task",
-  "id": string,
-  "etag": etag,
-  "title": string,
-  "updated": datetime,
-  "selfLink": string,
-  "parent": string,
-  "position": string,
-  "notes": string,
-  "status": string,
-  "due": datetime,
-  "completed": datetime,
-  "deleted": boolean,
-  "hidden": boolean,
-  "links": [
-    {
-      "type": string,
-      "description": string,
-      "link": string
-    }
-  ]
-}
+## Known limits
 
-## Useful links
-- https://developers.google.com/apis-explorer/#search/tasks/tasks/v1/
-- https://developers.google.com/google-apps/tasks/
-- https://console.developers.google.com/iam-admin/iam/project?project=thisismytodo
+- Only the default task list is shown, and subtasks appear as ordinary tasks.
+- A task made with Enter moves to the top after a refresh.
+- There is no log out button.
+- Google has deprecated the sign-in library this uses, in favour of
+  [Google Identity Services](https://developers.google.com/identity/oauth2/web/guides/migration-to-gis).
+
+## Files
+
+| File | What it does |
+| --- | --- |
+| `index.html` | The page |
+| `tasks.js` | Sign-in, and everything that talks to Google Tasks |
+| `script.js` | Buttons, keys and the task count |
+| `style.css` | Styles |
+| `jquery.js` | jQuery 2.0.3 |
+
+## Running it locally
+
+    python3 -m http.server 8080
+
+Then open http://localhost:8080/. Google sign-in only works from addresses listed
+under "Authorised JavaScript origins" for the OAuth client in the
+[Google Cloud project](https://console.cloud.google.com/auth/clients?project=thisismytodo):
+currently `https://mytodo.github.io` and `http://localhost:8080`.
+
+Changes pushed to `main` are published by GitHub Pages.

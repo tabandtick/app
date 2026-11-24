@@ -84,17 +84,6 @@ function toggleToDoCheckboxes() {
 	});
 }
 
-function saveToDoList() {
-	$("#save").click(function (event) {
-		var myToDoList = [];
-		$(".todo").each(function (index, el) {
-			myToDoList.push($(el).val())
-		})
-		console.log(myToDoList);
-		$.post("/save", {list: myToDoList});
-	});
-}
-
 function keydown(event) {
 
 	var li = $("<li></li>");
@@ -188,7 +177,5 @@ $(document).ready(function() {
 	updateToDoCount();
 
 	updateCheckboxStatus();
-
-	saveToDoList();
 
 });
