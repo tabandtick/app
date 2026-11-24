@@ -2,6 +2,7 @@ var CLIENT_ID = '146982777170-h1btpb05ltctf58n4f9foqof665i08j7.apps.googleuserco
 var SCOPES = ['https://www.googleapis.com/auth/tasks'];
 // The signed-in user's own default list.
 var TASK_LIST = '@default';
+var tasksLoaded = false;
 
 function checkAuth() {
   gapi.auth.authorize(
@@ -13,13 +14,33 @@ function checkAuth() {
 }
 
 function handleAuthResult(authResult) {
-  var authorizeDiv = document.getElementById('authorize-div');
   if (authResult && !authResult.error) {
-    authorizeDiv.style.display = 'none';
-    loadTasksApi();
+    showStatus('Loading\u2026');
+    listTasks();
   } else {
-    authorizeDiv.style.display = 'inline';
+    showLogIn();
   }
+}
+
+// Shows a message in place of the Log In button; '' shows neither.
+function showStatus(message) {
+  $('#status').text(message);
+  $('#authorize-div').hide();
+}
+
+function showLogIn() {
+  if (tasksLoaded) return;
+  $('#status').text('');
+  $('#authorize-div').show();
+}
+
+// The silent sign-in sometimes never answers, so don't wait for it forever.
+setTimeout(function() {
+  if (!signedIn()) showLogIn();
+}, 6000);
+
+function signedIn() {
+  return !!(window.gapi && gapi.auth && gapi.auth.getToken && gapi.auth.getToken());
 }
 
 function handleAuthClick(event) {
@@ -29,30 +50,28 @@ function handleAuthClick(event) {
   return false;
 }
 
-function loadTasksApi() {
-  gapi.client.load('tasks', 'v1', listTaskLists);
+function listTasks() {
+  gapi.client.request({
+      path: 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks',
+      method: 'GET'
+  }).execute(function(resp) {
+    if (tasksLoaded) return; // a late silent sign-in must not list them twice
+    if (!resp || resp.error) {
+      console.error('Could not load tasks', resp && resp.error);
+      showLogIn();
+      return;
+    }
+    tasksLoaded = true;
+    showStatus('');
+    var tasks = resp.items || [];
+    for (var i = 0; i < tasks.length; i++) {
+      $('#claire').append(taskRow(tasks[i]));
+    }
+    updateToDoCount();
+    toggleToDoCheckboxes();
+    if (!tasks.length) $(document.body).append($('<p>No tasks</p>'));
+  });
 }
-
-function listTaskLists() {
-    var request = gapi.client.tasks.tasks.list({
-            'tasklist': TASK_LIST
-          });
-
-          request.execute(function(resp) {
-            var taskLists = resp.items;
-            if (taskLists && taskLists.length > 0) {
-              for (var i = 0; i < taskLists.length; i++) {
-                var taskList = taskLists[i];
-                // console.log(taskList);
-                $("#claire").append(taskRow(taskList));
-                updateToDoCount();
-                toggleToDoCheckboxes();
-              }
-            } else {
-              $(document.body).append($("<p>No tasks</p>"));
-            }
-          });
-      }
 
 function completeTask(completedID, gAPI, task) {
   if (!completedID) return; // not saved to Google yet
@@ -127,7 +146,7 @@ function saveTitle(todo) {
 }
 
 function newTask() {
-  if (!gapi.auth.getToken()) return handleAuthClick();
+  if (!signedIn()) return handleAuthClick();
   var row = taskRow({});
   $('#claire').prepend(row);
   row.children().first().focus();
