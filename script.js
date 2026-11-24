@@ -147,7 +147,7 @@ $(document).ready(function() {
 
 	$('#done-toggle').click(toggleDone);
 	$('#done-more').click(loadDone);
-	$(window).on('resize', function() { $('.todo').each(function() { autosize($(this)); }); });
+	$(window).on('resize', autosizeAll);
 
 	updateToDoCount();
 

@@ -66,9 +66,11 @@ function api(method, path, body, done, failed) {
 }
 
 var messageTimer;
+var undoShown = false; // whether the message is for undoing a removal
 
 function showMessage(text, button, onClick, ms) {
   clearTimeout(messageTimer);
+  undoShown = false;
   $('#message span').text(text);
   $('#message button').toggle(!!button).text(button || '').off('click').on('click', function() {
     hideMessage();
@@ -80,6 +82,7 @@ function showMessage(text, button, onClick, ms) {
 
 function hideMessage() {
   clearTimeout(messageTimer);
+  undoShown = false;
   $('#message').hide();
 }
 
@@ -139,9 +142,18 @@ function showTasks(tasks) {
 }
 
 function refreshRows() {
-  $('.todo').each(function() { autosize($(this)); });
+  autosizeAll();
   updateToDoCount();
   toggleToDoCheckboxes();
+  updateDoneCount();
+}
+
+// Measure every row before changing any: mixing the two is slow with many rows.
+function autosizeAll() {
+  var shown = $('.todo').filter(function() { return this.offsetParent; });
+  shown.css('height', 'auto');
+  var heights = shown.map(function() { return this.scrollHeight; }).get();
+  shown.each(function(i) { this.style.height = heights[i] + 'px'; });
 }
 
 // Show the list as Google now has it, unless that would lose something.
@@ -202,6 +214,11 @@ function loadDone() {
   });
 }
 
+function updateDoneCount() {
+  var since = ['', ' in the last 30 days', ' in the last year', ''][doneShown];
+  $('#done-toggle').text('Completed' + (doneShown ? ' (' + $('#done-list li').length + since + ')' : ''));
+}
+
 function sortDone() {
   var rows = $('#done-list li').get().sort(function(a, b) {
     var x = $(a).children('.todo')[0].completedAt || '', y = $(b).children('.todo')[0].completedAt || '';
@@ -236,6 +253,12 @@ function setCompleted(checkbox) {
       reload(); // puts it back in its place
     }
     renderMeta(row);
+    if (done && !removals.length) { // keep the undo for a delete, if there is one
+      showMessage('Task completed.', 'Undo', function() {
+        checkbox.prop('checked', false);
+        setCompleted(checkbox);
+      }, 7000);
+    }
   }, function(status) {
     checkbox.prop('checked', !done);
     todo.toggleClass('checked', !done);
@@ -297,9 +320,12 @@ function dayName(due) {
 function renderMeta(row) {
   var values = current(row.children('.todo'));
   var overdue = values.due && values.due < isoDay(new Date()) && !row.children('input[type=checkbox]').prop('checked');
-  row.find('.when').text(values.due ? (overdue ? 'Overdue: ' : '') + dayName(values.due) : '').toggleClass('overdue', !!overdue);
+  var completedAt = row.children('.todo')[0].completedAt;
+  var when = completedAt ? 'Completed: ' + dayName(isoDay(new Date(completedAt)))
+    : values.due ? (overdue ? 'Overdue: ' : '') + dayName(values.due) : '';
+  row.find('.when').text(when).toggleClass('overdue', !!overdue);
   row.find('.preview').text(values.notes.split('\n')[0]);
-  row.children('.meta').toggle(!!(values.due || values.notes));
+  row.children('.meta').toggle(!!(when || values.notes));
 }
 
 function subtaskRows(todo) {
@@ -425,7 +451,9 @@ function removeRow(todo, message, onUndo) {
 function showUndo() {
   var last = removals[removals.length - 1];
   var more = removals.length > 1 ? ' ' + removals.length + ' changes can be undone.' : '';
-  if (last) showMessage(last.text + more, 'Undo', undoRemoval);
+  if (!last) return;
+  showMessage(last.text + more, 'Undo', undoRemoval);
+  undoShown = true;
 }
 
 // Undo the latest removal. Earlier ones can be undone after it.
@@ -450,7 +478,7 @@ function putBack(r, todos) {
 function finishRemoval(r) {
   removals.splice($.inArray(r, removals), 1);
   clearTimeout(r.timer);
-  if ($('#message button').text() === 'Undo') { // leave any other message up
+  if (undoShown) { // leave any other message up
     hideMessage();
     showUndo();
   }
@@ -522,7 +550,7 @@ function flush() {
       if (this.id) fetch(url + '/' + this.id, { method: 'DELETE', headers: headers, keepalive: true }).catch(function() {});
     });
   });
-  if ($('#message button').text() === 'Undo') hideMessage();
+  if (undoShown) hideMessage();
 }
 
 $(window).on('pagehide', flush);

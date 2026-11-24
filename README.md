@@ -19,7 +19,7 @@ works on your default task list.
 - **Delete** at the end of a row joins the next one to it.
 - **Up and down arrows** move between rows.
 
-Deleting and joining can be undone for 7 seconds, latest first. Google is only
+Completing, deleting and joining can be undone for 7 seconds, latest delete first. Google is only
 told to delete anything once that time is up, or when the page closes. A task
 with subtasks can't be joined to another.
 
