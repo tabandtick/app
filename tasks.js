@@ -50,62 +50,73 @@ function handleAuthClick(event) {
   return false;
 }
 
+// Calls the Tasks API on the list. done(result) on success, failed(status) if not.
+function api(method, path, body, done, failed) {
+  var request = {
+    path: 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks' + path,
+    method: method
+  };
+  if (body) request.body = body;
+  gapi.client.request(request).then(function(resp) {
+    if (done) done(resp.result);
+  }, function(err) {
+    console.error(method + ' failed', err);
+    if (failed) failed(err && err.status);
+  });
+}
+
+var messageTimer;
+
+function showMessage(text, button, onClick, ms) {
+  clearTimeout(messageTimer);
+  $('#message span').text(text);
+  $('#message button').toggle(!!button).text(button || '').off('click').on('click', function() {
+    hideMessage();
+    onClick();
+  });
+  $('#message').show();
+  if (ms) messageTimer = setTimeout(hideMessage, ms);
+}
+
+function hideMessage() {
+  clearTimeout(messageTimer);
+  $('#message').hide();
+}
+
+// Google's access runs out after about an hour, which shows up as a 401.
+function showFailure(text, status, retry) {
+  if (status === 401) showMessage(text + ' Please log in again.', 'Log in', handleAuthClick);
+  else showMessage(text, retry && 'Retry', retry, retry ? 0 : 6000);
+}
+
 function listTasks() {
-  gapi.client.request({
-      path: 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks',
-      method: 'GET'
-  }).execute(function(resp) {
+  if (tasksLoaded) return saveAll(); // logged in again: save what couldn't be saved
+  api('GET', '', null, function(result) {
     if (tasksLoaded) return; // a late silent sign-in must not list them twice
-    if (!resp || resp.error) {
-      console.error('Could not load tasks', resp && resp.error);
-      showLogIn();
-      return;
-    }
     tasksLoaded = true;
     showStatus('');
-    var tasks = resp.items || [];
+    var tasks = (result && result.items) || [];
     for (var i = 0; i < tasks.length; i++) {
       $('#claire').append(taskRow(tasks[i]));
     }
     updateToDoCount();
     toggleToDoCheckboxes();
     if (!tasks.length) $(document.body).append($('<p>No tasks</p>'));
+  }, showLogIn);
+}
+
+// Tick or untick. If Google refuses, put the box back as it was.
+function setCompleted(checkbox) {
+  var todo = checkbox.siblings('.todo');
+  var done = checkbox.prop('checked');
+  todo.toggleClass('checked', done);
+  if (!todo.attr('id')) return; // saveTitle sends it once the task exists
+  var body = done ? { status: 'completed' } : { status: 'needsAction', completed: null };
+  api('PATCH', '/' + todo.attr('id'), body, null, function(status) {
+    checkbox.prop('checked', !done);
+    todo.toggleClass('checked', !done);
+    showFailure('Could not update that task.', status);
   });
-}
-
-function completeTask(completedID, gAPI, task) {
-  if (!completedID) return; // not saved to Google yet
-  gapi.client.request({
-      path: 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks/' + completedID,
-      method: 'PATCH',
-      body:
-          {
-            id: completedID,
-            status: 'completed'
-          }
-  }).execute();
-}
-
-function uncompleteTask(uncompletedID, gAPI, task) {
-  if (!uncompletedID) return; // not saved to Google yet
-  gapi.client.request({
-      path: 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks/' + uncompletedID,
-      method: 'PATCH',
-      body:
-          {
-            id: uncompletedID,
-            status: 'needsAction',
-            completed: null
-          }
-  }).execute();
-}
-
-function deleteTask(deletedID, gAPI, task) {
-  if (!deletedID) return; // not saved to Google yet
-  gapi.client.request({
-      path: 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks/' + deletedID,
-      method: 'DELETE'
-  }).execute();
 }
 
 // Set the title with .val() so quotes and HTML in it are treated as text.
@@ -117,33 +128,147 @@ function taskRow(task) {
   return $('<li></li>').append(todo, $('<input type="checkbox"/>').prop('checked', done));
 }
 
-// State lives on the element, not in .data(): removing a focused row fires
-// focusout after jQuery has already cleared its data.
+// State lives on the element, not in .data():
+//   savedTitle  the title Google has      saving   a save is in progress
+//   deleted     hidden, can be undone     gone     no longer undoable
+function isUnsaved(todo) {
+  var el = todo[0];
+  if (!el || el.deleted) return false;
+  return todo.val() !== (el.savedTitle || '');
+}
+
 // Save a row's text: create the task the first time, then update its title.
 function saveTitle(todo) {
+  var el = todo[0];
+  if (!el) return;
+  clearTimeout(el.timer);
+  if (el.saving || !isUnsaved(todo)) return;
   var title = todo.val();
   var id = todo.attr('id');
-  var el = todo[0];
-  if (!el || el.saving || el.deleted || title === (el.savedTitle || '')) return;
-  if (!id && !title) return;
   el.saving = true;
-  gapi.client.request({
-      path: 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks' + (id ? '/' + id : ''),
-      method: id ? 'PATCH' : 'POST',
-      body: { title: title }
-  }).execute(function(resp) {
+  api(id ? 'PATCH' : 'POST', id ? '/' + id : '', { title: title }, function(result) {
     el.saving = false;
-    if (!resp || resp.error) {
-      console.error('Could not save task', resp && resp.error);
-      return;
-    }
-    // Deleted from the page while it was being created.
-    if (!id && el.deleted) return deleteTask(resp.id);
-    todo.attr('id', resp.id);
     el.savedTitle = title;
+    if (!id) {
+      todo.attr('id', result.id);
+      if (el.gone) return deleteTask(todo);
+      var box = todo.siblings('input[type=checkbox]');
+      if (box.prop('checked')) setCompleted(box);
+    }
     saveTitle(todo); // the text may have changed while saving
+  }, function(status) {
+    el.saving = false;
+    if (!el.gone) showFailure('Could not save your changes.', status, saveAll);
   });
 }
+
+// Save shortly after typing stops, so closing the tab loses nothing.
+function saveSoon(todo) {
+  var el = todo[0];
+  if (!el) return;
+  clearTimeout(el.timer);
+  el.timer = setTimeout(function() { saveTitle(todo); }, 800);
+}
+
+function saveAll() {
+  $('.todo').each(function() { saveTitle($(this)); });
+}
+
+var undoable; // the latest removal, until it is undone or becomes final
+
+// Hide a row now and delete it from Google in a few seconds, unless undone.
+function removeRow(todo, text, onUndo) {
+  finishRemoval();
+  var row = todo.parent();
+  var removal = { todo: todo, row: row, next: row.next(), prev: row.prev(), list: row.parent(), onUndo: onUndo };
+  clearTimeout(todo[0].timer);
+  todo[0].deleted = true; // before detaching, which fires focusout
+  row.removeClass('selected').detach();
+  undoable = removal;
+  removal.timer = setTimeout(finishRemoval, 7000);
+  showMessage(text, 'Undo', undoRemoval);
+  updateToDoCount();
+}
+
+function undoRemoval() {
+  var r = undoable;
+  if (!r) return;
+  undoable = null;
+  clearTimeout(r.timer);
+  putBack(r);
+  if (r.onUndo) r.onUndo();
+  saveTitle(r.todo);
+}
+
+function putBack(r) {
+  r.todo[0].deleted = r.todo[0].gone = false;
+  if (r.next.length && $.contains(document, r.next[0])) r.next.before(r.row);
+  else if (r.prev.length && $.contains(document, r.prev[0])) r.prev.after(r.row);
+  else r.list.append(r.row);
+  updateToDoCount();
+  toggleToDoCheckboxes();
+}
+
+function finishRemoval() {
+  var r = undoable;
+  if (!r) return;
+  undoable = null;
+  clearTimeout(r.timer);
+  if ($('#message button').text() === 'Undo') hideMessage(); // leave any other message up
+  r.todo[0].gone = true;
+  deleteTask(r.todo, r);
+}
+
+function deleteTask(todo, removal) {
+  var id = todo.attr('id');
+  if (!id) return; // never saved, or saveTitle deletes it once it has an id
+  api('DELETE', '/' + id, null, null, function(status) {
+    if (status === 404) return; // already deleted elsewhere
+    if (removal) putBack(removal);
+    showFailure('Could not delete that task.', status);
+  });
+}
+
+// Join a row's text onto the one before it, and remove it.
+function mergeRows(target, source) {
+  var before = target.val();
+  target.val(before + source.val());
+  target.setCursorPosition(before.length);
+  saveTitle(target);
+  removeRow(source, 'Tasks joined.', function() {
+    target.val(before);
+    saveTitle(target);
+  });
+}
+
+// Last chance as the page closes: requests that outlive it.
+function flush() {
+  if (!signedIn()) return;
+  var headers = { 'Authorization': 'Bearer ' + gapi.auth.getToken().access_token, 'Content-Type': 'application/json' };
+  var url = 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks';
+  $('.todo').each(function() {
+    var el = this, todo = $(el), id = todo.attr('id'), title = todo.val();
+    if (!isUnsaved(todo) || (el.saving && !id)) return;
+    clearTimeout(el.timer);
+    el.saving = true;
+    fetch(url + (id ? '/' + id : ''), { method: id ? 'PATCH' : 'POST', headers: headers, keepalive: true, body: JSON.stringify({ title: title }) })
+      .then(function(r) { if (!r.ok) throw r; return r.json(); })
+      .then(function(task) { todo.attr('id', task.id); el.savedTitle = title; })
+      .catch(function() {})
+      .then(function() { el.saving = false; });
+  });
+  var r = undoable;
+  if (r) {
+    undoable = null;
+    clearTimeout(r.timer);
+    hideMessage();
+    r.todo[0].gone = true;
+    var rid = r.todo.attr('id');
+    if (rid) fetch(url + '/' + rid, { method: 'DELETE', headers: headers, keepalive: true }).catch(function() {});
+  }
+}
+
+$(window).on('pagehide', flush);
 
 function newTask() {
   if (!signedIn()) return handleAuthClick();

@@ -54,28 +54,19 @@ function updateToDoCount() {
 
 function updateCheckboxStatus() {
 	$('ul').on('change', 'input[type=checkbox]', function(event) {
-	    if($(event.target).is(":checked")) {
-	        $(event.target).parent().children().first().addClass('checked');
-          var completedID = $(event.target).parent().children().first().attr('id');
-          completeTask(completedID);
-	    }
-	    else {
-	        $(event.target).parent().children().first().removeClass('checked');
-          var uncompletedID = $(event.target).parent().children().first().attr('id');
-          uncompleteTask(uncompletedID);
-	    }
+		setCompleted($(event.target));
 	});
 }
 
+var selected = $();
+
 $("#delete-task-button").click(function (event) {
-  console.log("Delete button pressed");
-  var deletedID = $('#claire').children().children().first().attr('id');
-  console.log('Will attempt to delete task ' + deletedID);
-  var first = $('#claire').children().children().first();
-  if (first[0]) first[0].deleted = true;
-  first.parent().remove(); //removes task and checkbox
-  deleteTask(deletedID);
-  console.log('Delete button function completed');
+  if (!selected.length || !$.contains(document, selected[0])) {
+    showMessage('Click a task first, then Delete Task.', null, null, 4000);
+    return;
+  }
+  removeRow(selected, 'Task deleted.');
+  selected = $();
 });
 
 $("#new-task-button").click(function (event) {
@@ -137,24 +128,22 @@ function keydown(event) {
 				currentToDo.val(currentToDoTextRemaining);
 				nextToDo.val(currentToDoTextMoving);
 				nextToDo.setCursorPosition(0);
+				saveSoon(currentToDo);
+				saveSoon(nextToDo);
 			}
 		break;
 
 		case 8: //backspace
-			if (toDoListLength() > 1 && currentToDoCursorPosition == 0) {
-				event.preventDefault();
-        // console.log(currentToDo.attr('id'));
-        var deletedID = currentToDo.attr('id');
-        currentToDo[0].deleted = true;
-        deleteTask(deletedID);
-				currentToDoListItem.remove();
-				if (currentToDoListPosition == 1) {
-					nextToDo.setCursorPosition(0);
+			// Not while text is selected: that backspace should just clear it.
+			if (toDoListLength() > 1 && currentToDoCursorPosition == 0 && currentToDo[0].selectionEnd == 0) {
+				if (currentToDoListPosition > 1) {
+					event.preventDefault();
+					mergeRows(currentToDo.parent().prev().children().first(), currentToDo);
 				}
-				else {
-					previousToDo.val(previousToDoText + currentToDoText);
-					saveTitle(previousToDo);
-					previousToDo.setCursorPosition(previousToDoText.length);
+				else if (!currentToDoText) {
+					event.preventDefault();
+					removeRow(currentToDo, 'Task deleted.');
+					nextToDo.setCursorPosition(0);
 				}
 			}
 		break;
@@ -162,9 +151,7 @@ function keydown(event) {
 		case 46: //delete
 			if (currentToDoListPosition !== toDoListLength() && currentToDoCursorPosition == currentToDoTextEnd) {
 				event.preventDefault();
-				nextToDoListItem.remove();
-				currentToDo.val(currentToDoText + nextToDoText);
-				currentToDo.setCursorPosition(currentToDoTextEnd);
+				mergeRows(currentToDo, nextToDo);
 			}
 		break;
 
@@ -190,7 +177,13 @@ function keydown(event) {
 $(document).ready(function() {
 
 	lastToDoList.on('keydown', ".todo", keydown);
+	lastToDoList.on('focusin', ".todo", function() {
+		$('li.selected').removeClass('selected');
+		selected = $(this);
+		selected.parent().addClass('selected');
+	});
 	lastToDoList.on('focusout', ".todo", function() { saveTitle($(this)); });
+	lastToDoList.on('input', ".todo", function() { saveSoon($(this)); });
 	lastToDoList.on('input', ".todo", updateToDoCount);
 	lastToDoList.on('input', ".todo", toggleToDoCheckboxes);
 
