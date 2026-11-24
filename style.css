@@ -109,11 +109,19 @@ ul.list {
   padding-right: 30px;
 }
 
+#claire {
+  padding-left: 28px;
+}
+
+#done-list {
+  padding-left: 48px;
+}
+
 li {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
-  padding: 3px 0 3px 8px;
+  padding: 3px 0;
   list-style-type: none;
   border-left: 4px solid transparent;
 }
@@ -140,6 +148,79 @@ li input[type='checkbox'] {
 
 li.unhide input[type='checkbox'] {
   visibility: visible;
+}
+
+.handle {
+  flex: none;
+  width: 20px;
+  line-height: 36px;
+  color: #aaa;
+  font-size: 20px;
+  letter-spacing: -4px;
+  cursor: grab;
+  visibility: hidden;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#claire li.unhide:hover .handle,
+#claire li.unhide.selected .handle,
+#claire li.dragging .handle {
+  visibility: visible;
+}
+
+#done-list .handle,
+#done-list .move {
+  display: none;
+}
+
+li.dragging {
+  opacity: 0.4;
+}
+
+#drop-line {
+  display: none;
+  position: fixed;
+  z-index: 1;
+  height: 3px;
+  background-color: #4885ed;
+  pointer-events: none;
+}
+
+.move {
+  margin-top: 8px;
+}
+
+
+.move button,
+.delete-this {
+  margin: 0 8px 4px 0;
+  padding: 4px 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: none;
+  color: #444;
+}
+
+.delete-this {
+  border-color: #db3236;
+  color: #c5221f;
+}
+
+li.subtask [data-move='indent'],
+li.subtask [data-move='subtask'],
+li:not(.subtask) [data-move='outdent'] {
+  display: none;
+}
+
+#log-out-button {
+  float: right;
+  margin-right: 30px;
+  border: 1px solid #ccc;
+  background: none;
+  color: #444;
+  text-shadow: none;
 }
 
 .todo {
@@ -181,6 +262,11 @@ li.unhide input[type='checkbox'] {
 .meta,
 .details {
   flex: 0 0 100%;
+  padding-left: 66px;
+}
+
+#done-list .meta,
+#done-list .details {
   padding-left: 46px;
 }
 
@@ -358,12 +444,29 @@ li.open .preview {
     margin-top: 75px;
   }
 
-  ul.list {
+  ul.list,
+  #claire {
     padding: 0 5px;
   }
 
+  #done-list {
+    padding-left: 25px;
+  }
+
+  .handle {
+    line-height: 28px;
+  }
+
+  #claire li.unhide .handle {
+    visibility: visible;
+  }
+
+  #log-out-button {
+    margin-right: 15px;
+  }
+
   li {
-    padding: 6px 0 6px 4px;
+    padding: 6px 0;
   }
 
   .more {
@@ -388,16 +491,21 @@ li.open .preview {
 
   .meta,
   .details {
+    padding-left: 58px;
+  }
+
+  #done-list .meta,
+  #done-list .details {
     padding-left: 38px;
   }
 
   #done-toggle,
   #done-more {
-    margin-left: 10px;
+    margin-left: 23px;
   }
 
   #done-none {
-    margin-left: 16px;
+    margin-left: 29px;
   }
 
   #message {
@@ -405,5 +513,23 @@ li.open .preview {
     right: 15px;
     bottom: 15px;
     font-size: 1em;
+  }
+}
+
+@media (max-width: 350px) {
+  .btn-lg {
+    padding: 10px 8px;
+    font-size: 14px;
+  }
+
+  #new-task-button,
+  #delete-task-button {
+    margin-left: 10px;
+  }
+
+  #authorize-button,
+  #log-out-button,
+  #status {
+    margin-right: 10px;
   }
 }
