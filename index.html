@@ -53,6 +53,33 @@
     <div id="list-div">
       <ul class="list" id="claire">
       </ul>
+      <div id="empty">
+        <svg width="180" height="132" viewBox="0 0 180 132" fill="none" aria-hidden="true">
+          <rect x="30" y="6" width="120" height="120" rx="12" fill="#eef3fd"/>
+          <rect x="46" y="26" width="20" height="20" rx="5" fill="#3cba54"/>
+          <path d="M51 36l4 4 7-8" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M78 36h54" stroke="#b9cdf6" stroke-width="6" stroke-linecap="round"/>
+          <rect x="46" y="56" width="20" height="20" rx="5" fill="#3cba54"/>
+          <path d="M51 66l4 4 7-8" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M78 66h38" stroke="#b9cdf6" stroke-width="6" stroke-linecap="round"/>
+          <rect x="47.500" y="87.500" width="17" height="17" rx="4" stroke="#4885ed" stroke-width="3" stroke-dasharray="5 4"/>
+          <path d="M78 96h20" stroke="#4885ed" stroke-width="6" stroke-linecap="round"/>
+          <path d="M108 88v16" stroke="#4885ed" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+        <h2>Nothing to do</h2>
+        <p>Add a task and it&rsquo;ll appear in Google Tasks too.</p>
+        <button type="button" id="empty-new">Add a task</button>
+      </div>
+
+      <div id="done">
+        <button type="button" id="done-toggle" aria-expanded="false" aria-controls="done-body">Completed</button>
+        <div id="done-body">
+          <ul class="list" id="done-list">
+          </ul>
+          <p id="done-none"></p>
+          <button type="button" id="done-more">Show older</button>
+        </div>
+      </div>
     </div>
 
   </body>

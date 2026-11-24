@@ -1,22 +1,4 @@
-var lastToDoList = $("ul.list");
-var lastToDo = $(".todo");
-lastToDo.focus();
-
-$.fn.getCursorPosition = function() {
-        var input = this.get(0);
-        if (!input) return; // No (input) element found
-        if ('selectionStart' in input) {
-            // Standard-compliant browsers
-            return input.selectionStart;
-        } else if (document.selection) {
-            // IE
-            input.focus();
-            var sel = document.selection.createRange();
-            var selLen = document.selection.createRange().text.length;
-            sel.moveStart('character', -input.value.length);
-            return sel.text.length - selLen;
-        }
-    };
+// The task count, buttons and keys. tasks.js does everything that talks to Google.
 
 $.fn.setCursorPosition = function(start, end) {
     if(!end) end = start;
@@ -34,152 +16,139 @@ $.fn.setCursorPosition = function(start, end) {
     });
 };
 
-function toDoListLength() {
-	return $("li").length;
-}
-
-function toDoLength() {
-	return $('.todo').val().length;
-}
-
 function updateToDoCount() {
-	var myToDoListCount = 0;
-		$(".todo").each(function (index, el) {
-			if ($(el).val().length > 0) {
-				myToDoListCount = myToDoListCount + 1;
-			}
-		})
-		$("#total").text(myToDoListCount);
+	var count = $('#claire .todo').filter(function() { return this.value.length > 0; }).length;
+	$('#total').text(count);
+	$('#empty').toggle(tasksLoaded && !$('#claire li').length);
 }
 
-function updateCheckboxStatus() {
-	$('ul').on('change', 'input[type=checkbox]', function(event) {
-		setCompleted($(event.target));
+// A row only gets a tick box once it has a title.
+function toggleToDoCheckboxes() {
+	$('.todo').each(function() {
+		$(this).parent().toggleClass('unhide', this.value.length > 0);
 	});
 }
 
 var selected = $();
 
-$("#delete-task-button").click(function (event) {
-  if (!selected.length || !$.contains(document, selected[0])) {
-    showMessage('Click a task first, then Delete Task.', null, null, 4000);
-    return;
-  }
-  var row = selected.parent();
-  var following = (row.next().length ? row.next() : row.prev()).children('.todo');
-  removeRow(selected, 'Task deleted.');
-  selected = $();
-  // Ready to delete the next one. Caret at the end, so Backspace edits its text.
-  if (following.length) following.setCursorPosition(following.val().length);
+$('#new-task-button, #empty-new').click(function() { newTask(); });
+
+$('#delete-task-button').click(function() {
+	if (!selected.length || !$.contains(document, selected[0])) {
+		showMessage('Click a task first, then Delete Task.', null, null, 4000);
+		return;
+	}
+	var rows = selected.parent().add(subtaskRows(selected));
+	var row = rows.last().next().length ? rows.last().next() : rows.first().prev();
+	var following = row.children('.todo');
+	removeRow(selected);
+	selected = $();
+	// Ready to delete the next one. Caret at the end, so Backspace edits its text.
+	if (following.length) following.setCursorPosition(following.val().length);
 });
 
-$("#new-task-button").click(function (event) {
-  newTask();
-});
-
-function toggleToDoCheckboxes() {
-	$(".todo").each(function (index, el) {
-	    if ($(el).val().length > 0) {
-				$(this).parent().addClass('unhide');
-		}
-	    else {
-				$(this).parent().removeClass('unhide');
-		}
-	});
+// Split a row in two. The new one goes below any subtasks, as it does in Google.
+function splitRow(todo) {
+	var position = todo[0].selectionStart, title = todo.val();
+	var below = subtaskRows(todo).last();
+	var row = taskRow({ parent: todo[0].parentTask });
+	var added = row.children('.todo').val(title.slice(position));
+	(below.length ? below : todo.parent()).after(row);
+	todo.val(title.slice(0, position));
+	refreshRows();
+	added.setCursorPosition(0);
+	saveSoon(todo);
+	saveSoon(added);
 }
 
 function keydown(event) {
+	if (event.originalEvent && event.originalEvent.isComposing) return;
+	var todo = $(event.currentTarget), el = todo[0], row = todo.parent();
+	var position = el.selectionStart, length = todo.val().length;
+	var caret = el.selectionEnd === position; // nothing selected
+	var modified = event.shiftKey || event.metaKey || event.altKey || event.ctrlKey;
+	var completed = row.parent().is('#done-list');
+	var previous = row.prev().children('.todo'), next = row.next().children('.todo');
+	var wrapped = el.clientHeight > 1.5 * parseFloat($(el).css('line-height'));
 
-	var li = $("<li></li>");
-	var input = $('<input type="text" class="todo"/><input type="checkbox"/>');
-	var eventCode = event.which || event.keyCode;
-
-	var currentToDo = $(event.currentTarget);
-	var currentToDoText = currentToDo.val();
-	var currentToDoListItem = currentToDo.parent();
-
-	var currentToDoListPosition = ($("li").index(currentToDo.parent()) + 1);
-	var currentToDoCursorPosition = currentToDo.getCursorPosition();
-	var currentToDoTextEnd = currentToDoText.length;
-
-	var nextToDo = currentToDo.parent().next().children().first();
-	var nextToDoText = nextToDo.val();
-	var nextToDoListItem = nextToDo.parent();
-
-	var previousToDo = currentToDo.parent().prev().children().first();
-	var previousToDoText = previousToDo.val();
-
-	switch (eventCode) {
+	switch (event.which || event.keyCode) {
 
 		case 13: //enter
 			event.preventDefault();
-			currentToDoListItem.after(li.append(input));
-			var nextToDo = currentToDo.parent().next().children().first(); //Why does this variable need to be repeated?
-			var currentToDoTextRemaining = currentToDoText.substring(0, currentToDoCursorPosition);
-			var currentToDoTextMoving = currentToDoText.substring(currentToDoCursorPosition, currentToDoTextEnd);
-			currentToDo.val(currentToDoTextRemaining);
-			nextToDo.val(currentToDoTextMoving);
-			nextToDo.setCursorPosition(0);
-			saveSoon(currentToDo);
-			saveSoon(nextToDo);
+			if (completed) todo.blur();
+			else splitRow(todo);
 		break;
 
 		case 8: //backspace
-			// Not while text is selected: that backspace should just clear it.
-			if (toDoListLength() > 1 && currentToDoCursorPosition == 0 && currentToDo[0].selectionEnd == 0) {
-				if (currentToDoListPosition > 1) {
-					event.preventDefault();
-					mergeRows(currentToDo.parent().prev().children().first(), currentToDo);
-				}
-				else if (!currentToDoText) {
-					event.preventDefault();
-					removeRow(currentToDo, 'Task deleted.');
-					nextToDo.setCursorPosition(0);
-				}
+			if (completed || position !== 0 || !caret) break;
+			if (previous.length) {
+				event.preventDefault();
+				mergeRows(previous, todo);
+			}
+			else if (!length && next.length) {
+				event.preventDefault();
+				removeRow(todo);
+				next.setCursorPosition(0);
 			}
 		break;
 
 		case 46: //delete
-			if (currentToDoListPosition !== toDoListLength() && currentToDoCursorPosition == currentToDoTextEnd) {
-				event.preventDefault();
-				mergeRows(currentToDo, nextToDo);
-			}
+			if (completed || position !== length || !caret || !next.length) break;
+			event.preventDefault();
+			mergeRows(todo, next);
 		break;
 
 		case 40: //down arrow
-			if (toDoListLength() > 1) {
-				event.preventDefault();
-				nextToDo.setCursorPosition(currentToDoCursorPosition);
-
-			}
+			if (modified || !next.length || (wrapped && position !== length)) break;
+			event.preventDefault();
+			next.setCursorPosition(position);
 		break;
 
 		case 38: //up arrow
-			if (toDoListLength() > 1) {
-				event.preventDefault();
-				previousToDo.setCursorPosition(currentToDoCursorPosition);
-			}
+			if (modified || !previous.length || (wrapped && position !== 0)) break;
+			event.preventDefault();
+			previous.setCursorPosition(position);
 		break;
 	}
-	updateToDoCount();
-	toggleToDoCheckboxes();
 }
 
 $(document).ready(function() {
 
-	lastToDoList.on('keydown', ".todo", keydown);
-	lastToDoList.on('focusin', ".todo", function() {
-		$('li.selected').removeClass('selected');
-		selected = $(this);
-		selected.parent().addClass('selected');
-	});
-	lastToDoList.on('focusout', ".todo", function() { saveTitle($(this)); });
-	lastToDoList.on('input', ".todo", function() { saveSoon($(this)); });
-	lastToDoList.on('input', ".todo", updateToDoCount);
-	lastToDoList.on('input', ".todo", toggleToDoCheckboxes);
+	$('ul.list')
+		.on('keydown', '.todo', keydown)
+		.on('focusin', 'li', function() {
+			$('li.selected').removeClass('selected');
+			selected = $(this).addClass('selected').children('.todo');
+		})
+		.on('focusout', '.todo, .notes, .due', function() { saveTask($(this).closest('li').children('.todo')); })
+		.on('input', '.todo', function() {
+			if (/\n/.test(this.value)) this.value = this.value.replace(/\n+/g, ' '); // pasted lines
+			autosize($(this));
+			updateToDoCount();
+			toggleToDoCheckboxes();
+		})
+		.on('input change', '.todo, .notes, .due', function() {
+			var row = $(this).closest('li');
+			renderMeta(row);
+			saveSoon(row.children('.todo'));
+		})
+		.on('change', 'input[type=checkbox]', function() { setCompleted($(this)); })
+		.on('click', '.more', function() {
+			var row = $(this).parent().toggleClass('open');
+			$(this).attr('aria-expanded', String(row.hasClass('open')));
+			if (row.hasClass('open')) row.find('.notes').focus();
+		})
+		.on('click', '.clear-due', function() {
+			var row = $(this).closest('li');
+			row.find('.due').val('');
+			renderMeta(row);
+			saveTask(row.children('.todo'));
+		});
+
+	$('#done-toggle').click(toggleDone);
+	$('#done-more').click(loadDone);
+	$(window).on('resize', function() { $('.todo').each(function() { autosize($(this)); }); });
 
 	updateToDoCount();
-
-	updateCheckboxStatus();
 
 });

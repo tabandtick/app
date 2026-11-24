@@ -104,58 +104,210 @@ li.selected {
   background-image: none;
 }
 
+ul.list {
+  margin-bottom: 0;
+  padding-right: 30px;
+}
+
 li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  padding: 3px 0 3px 8px;
   list-style-type: none;
-  overflow: hidden; /* gives the row the height of its floated inputs */
   border-left: 4px solid transparent;
 }
 
-input[type='text'] {
-  height: 1.5em;
-  font-size: 2em;
-  width: 95%;
+li.selected {
+  border-left-color: #4885ed;
+}
+
+li.subtask {
+  margin-left: 44px;
+}
+
+#done-list li.subtask {
+  margin-left: 0;
+}
+
+li input[type='checkbox'] {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  margin: 3px 12px 0 0;
+  visibility: hidden;
+}
+
+li.unhide input[type='checkbox'] {
+  visibility: visible;
+}
+
+.todo {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  margin: 0;
+  padding: 0 4px;
   border: none;
-  float: right;
-  padding: 0;
-  margin: 0;
+  resize: none;
+  overflow: hidden;
+  font-size: 28px;
+  line-height: 36px;
+  background: none;
 }
 
-input[type='checkbox'] {
-  width: 5%;
-  float: left;
-  height: 3em;
-  padding: 0;
-  margin: 0;
-  display: none;
-  /*background-color: #2196F3;*/
-}
-
-input[type='text'].checked {
+.todo.checked {
   text-decoration: line-through;
   color: gray;
 }
 
-.unhide input[type='checkbox'] {
-  display: inline-block;
-}
-
-#save {
-  display: inline;
-  float: right;
-  height: 2em;
-  font-size: 1.5em;
-  color: white;
-  background-color: #4285F4;
+.more,
+#done-toggle,
+#done-more,
+.clear-due {
   border: none;
-  padding: 10px;
+  background: none;
+  color: #666;
 }
 
-#left {
-  float: right;
-  color: #34A853;
-  display: inline;
-  font-size: 2em;
-  padding: 5px;
+.more {
+  flex: none;
+  width: 44px;
+  height: 36px;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.meta,
+.details {
+  flex: 0 0 100%;
+  padding-left: 46px;
+}
+
+.meta {
+  display: none;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #666;
+}
+
+.when {
+  margin-right: 12px;
+  font-weight: bold;
+}
+
+.when:empty {
+  display: none;
+}
+
+.when.overdue {
+  color: #c5221f;
+}
+
+.details {
+  display: none;
+  padding-top: 6px;
+  padding-bottom: 10px;
+}
+
+li.open .details {
+  display: block;
+}
+
+li.open .preview {
+  display: none;
+}
+
+.notes {
+  display: block;
+  width: 100%;
+  max-width: 600px;
+  margin-bottom: 8px;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 16px;
+}
+
+.details label {
+  font-weight: normal;
+}
+
+.due {
+  padding: 4px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 16px;
+}
+
+#empty,
+#done,
+#done-body,
+#done-none,
+#done-more {
+  display: none;
+}
+
+#done-none {
+  margin: 0 0 10px 52px;
+}
+
+#empty {
+  padding: 20px 30px 10px;
+  text-align: center;
+}
+
+#empty h2 {
+  margin: 18px 0 6px;
+  font-size: 24px;
+}
+
+#empty p {
+  margin: 0 0 18px;
+  color: #666;
+  font-size: 16px;
+  text-wrap: balance;
+}
+
+#empty-new {
+  padding: 10px 18px;
+  border: none;
+  border-radius: 6px;
+  background-color: #4885ed;
+  color: white;
+  font-size: 16px;
+}
+
+#empty-new:hover {
+  background-color: #2f6fe0;
+}
+
+#done {
+  margin: 20px 0 80px;
+}
+
+#done.open #done-body {
+  display: block;
+}
+
+#done-toggle {
+  margin-left: 46px;
+  padding: 10px 6px;
+  font-size: 18px;
+}
+
+#done-toggle:before {
+  content: "\25B8  ";
+}
+
+#done.open #done-toggle:before {
+  content: "\25BE  ";
+}
+
+#done-more {
+  margin-left: 46px;
+  padding: 10px 6px;
 }
 
 #total {
@@ -207,18 +359,45 @@ input[type='text'].checked {
   }
 
   ul.list {
-    padding: 0 10px;
+    padding: 0 5px;
   }
 
-  input[type='text'] {
-    font-size: 1.25em;
-    height: 2.2em;
-    width: 88%;
+  li {
+    padding: 6px 0 6px 4px;
   }
 
-  input[type='checkbox'] {
-    width: 10%;
-    height: 2.75em;
+  .more {
+    height: 28px;
+  }
+
+  #claire li.subtask {
+    margin-left: 28px;
+  }
+
+  li input[type='checkbox'] {
+    width: 26px;
+    height: 26px;
+    margin: 1px 8px 0 0;
+  }
+
+  .todo {
+    height: 28px;
+    font-size: 20px;
+    line-height: 28px;
+  }
+
+  .meta,
+  .details {
+    padding-left: 38px;
+  }
+
+  #done-toggle,
+  #done-more {
+    margin-left: 10px;
+  }
+
+  #done-none {
+    margin-left: 16px;
   }
 
   #message {
