@@ -91,18 +91,27 @@ function showFailure(text, status, retry) {
 
 function listTasks() {
   if (tasksLoaded) return saveAll(); // logged in again: save what couldn't be saved
-  api('GET', '', null, function(result) {
+  getPage([], '');
+}
+
+// Google returns at most 100 tasks at a time.
+function getPage(tasks, pageToken) {
+  var query = '?maxResults=100' + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : '');
+  api('GET', query, null, function(result) {
     if (tasksLoaded) return; // a late silent sign-in must not list them twice
-    tasksLoaded = true;
-    showStatus('');
-    var tasks = (result && result.items) || [];
-    for (var i = 0; i < tasks.length; i++) {
-      $('#claire').append(taskRow(tasks[i]));
-    }
-    updateToDoCount();
-    toggleToDoCheckboxes();
-    if (!tasks.length) $(document.body).append($('<p>No tasks</p>'));
+    tasks = tasks.concat((result && result.items) || []);
+    if (result && result.nextPageToken) return getPage(tasks, result.nextPageToken);
+    showTasks(tasks);
   }, showLogIn);
+}
+
+function showTasks(tasks) {
+  tasksLoaded = true;
+  showStatus('');
+  $('#claire').append($.map(tasks, taskRow));
+  updateToDoCount();
+  toggleToDoCheckboxes();
+  if (!tasks.length) $(document.body).append($('<p>No tasks</p>'));
 }
 
 // Tick or untick. If Google refuses, put the box back as it was.

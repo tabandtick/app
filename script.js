@@ -119,18 +119,16 @@ function keydown(event) {
 	switch (eventCode) {
 
 		case 13: //enter
-			if (toDoListLength() < 100) {
-				event.preventDefault();
-				currentToDoListItem.after(li.append(input));
-				var nextToDo = currentToDo.parent().next().children().first(); //Why does this variable need to be repeated?
-				var currentToDoTextRemaining = currentToDoText.substring(0, currentToDoCursorPosition);
-				var currentToDoTextMoving = currentToDoText.substring(currentToDoCursorPosition, currentToDoTextEnd);
-				currentToDo.val(currentToDoTextRemaining);
-				nextToDo.val(currentToDoTextMoving);
-				nextToDo.setCursorPosition(0);
-				saveSoon(currentToDo);
-				saveSoon(nextToDo);
-			}
+			event.preventDefault();
+			currentToDoListItem.after(li.append(input));
+			var nextToDo = currentToDo.parent().next().children().first(); //Why does this variable need to be repeated?
+			var currentToDoTextRemaining = currentToDoText.substring(0, currentToDoCursorPosition);
+			var currentToDoTextMoving = currentToDoText.substring(currentToDoCursorPosition, currentToDoTextEnd);
+			currentToDo.val(currentToDoTextRemaining);
+			nextToDo.val(currentToDoTextMoving);
+			nextToDo.setCursorPosition(0);
+			saveSoon(currentToDo);
+			saveSoon(nextToDo);
 		break;
 
 		case 8: //backspace

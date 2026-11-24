@@ -48,7 +48,7 @@ h1 {
 }
 
 li.selected {
-  box-shadow: inset 4px 0 #4885ed;
+  border-left-color: #4885ed;
 }
 
 #status {
@@ -89,21 +89,6 @@ li.selected {
   background-image: none;
 }
 
-#edit-task-button {
-  background-color: #f4c20d;
-  background-image: none;
-  color: white;
-  border: none;
-  display: block;
-  margin-left: 30px;
-  float: left;
-}
-
-#edit-task-button:hover {
-  background-color: #2196F3;
-  background-image: none;
-}
-
 #delete-task-button {
   background-color: #db3236;
   background-image: none;
@@ -121,6 +106,8 @@ li.selected {
 
 li {
   list-style-type: none;
+  overflow: hidden; /* gives the row the height of its floated inputs */
+  border-left: 4px solid transparent;
 }
 
 input[type='text'] {
@@ -178,4 +165,66 @@ input[type='text'].checked {
   font-size: 2.5em;
   padding: 5px;
   margin-right: 30px;
+}
+
+@media (max-width: 600px) {
+  h1 {
+    font-size: 2em;
+    margin-left: 15px;
+  }
+
+  #total {
+    font-size: 2em;
+    padding: 0 5px;
+    margin-right: 15px;
+  }
+
+  #header {
+    margin-bottom: 15px;
+  }
+
+  #new-task-button,
+  #delete-task-button {
+    margin-left: 15px;
+  }
+
+  #authorize-button,
+  #status {
+    margin-right: 15px;
+  }
+
+  #status {
+    font-size: 1em;
+  }
+
+  .btn-lg {
+    padding: 10px 12px;
+    font-size: 16px;
+  }
+
+  #list-div {
+    margin-top: 75px;
+  }
+
+  ul.list {
+    padding: 0 10px;
+  }
+
+  input[type='text'] {
+    font-size: 1.25em;
+    height: 2.2em;
+    width: 88%;
+  }
+
+  input[type='checkbox'] {
+    width: 10%;
+    height: 2.75em;
+  }
+
+  #message {
+    left: 15px;
+    right: 15px;
+    bottom: 15px;
+    font-size: 1em;
+  }
 }
