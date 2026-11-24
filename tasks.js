@@ -44,7 +44,7 @@ function listTaskLists() {
               for (var i = 0; i < taskLists.length; i++) {
                 var taskList = taskLists[i];
                 // console.log(taskList);
-                $("#claire").append($("<li><input type='text' class='todo " + (taskList.status === 'completed'?'checked':'') + "' id=" + taskList.id + " value='" + taskList.title + "'></input><input " + (taskList.status === 'completed'?'checked':'') + " type='checkbox'/></li>"));
+                $("#claire").append(taskRow(taskList));
                 updateToDoCount();
                 toggleToDoCheckboxes();
               }
@@ -55,6 +55,7 @@ function listTaskLists() {
       }
 
 function completeTask(completedID, gAPI, task) {
+  if (!completedID) return; // not saved to Google yet
   gapi.client.request({
       path: 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks/' + completedID,
       method: 'PATCH',
@@ -67,6 +68,7 @@ function completeTask(completedID, gAPI, task) {
 }
 
 function uncompleteTask(uncompletedID, gAPI, task) {
+  if (!uncompletedID) return; // not saved to Google yet
   gapi.client.request({
       path: 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks/' + uncompletedID,
       method: 'PATCH',
@@ -80,20 +82,53 @@ function uncompleteTask(uncompletedID, gAPI, task) {
 }
 
 function deleteTask(deletedID, gAPI, task) {
+  if (!deletedID) return; // not saved to Google yet
   gapi.client.request({
       path: 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks/' + deletedID,
       method: 'DELETE'
   }).execute();
 }
 
-function insertTask(gAPI, task) {
+// Set the title with .val() so quotes and HTML in it are treated as text.
+function taskRow(task) {
+  var done = task.status === 'completed';
+  var todo = $('<input type="text" class="todo"/>').toggleClass('checked', done).val(task.title || '');
+  if (task.id) todo.attr('id', task.id);
+  todo[0].savedTitle = task.title || '';
+  return $('<li></li>').append(todo, $('<input type="checkbox"/>').prop('checked', done));
+}
+
+// State lives on the element, not in .data(): removing a focused row fires
+// focusout after jQuery has already cleared its data.
+// Save a row's text: create the task the first time, then update its title.
+function saveTitle(todo) {
+  var title = todo.val();
+  var id = todo.attr('id');
+  var el = todo[0];
+  if (!el || el.saving || el.deleted || title === (el.savedTitle || '')) return;
+  if (!id && !title) return;
+  el.saving = true;
   gapi.client.request({
-      path: 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks',
-      method: 'POST',
-      body:
-          {
-          }
-  }).execute();
-  // console.log(request.id);
-  // $("#claire").append($("<li><input type='text' class='todo " + (taskList.status === 'completed'?'checked':'') + "' id=" + taskList.id + " value='" + taskList.title + "'></input><input " + (taskList.status === 'completed'?'checked':'') + " type='checkbox'/></li>"));
+      path: 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks' + (id ? '/' + id : ''),
+      method: id ? 'PATCH' : 'POST',
+      body: { title: title }
+  }).execute(function(resp) {
+    el.saving = false;
+    if (!resp || resp.error) {
+      console.error('Could not save task', resp && resp.error);
+      return;
+    }
+    // Deleted from the page while it was being created.
+    if (!id && el.deleted) return deleteTask(resp.id);
+    todo.attr('id', resp.id);
+    el.savedTitle = title;
+    saveTitle(todo); // the text may have changed while saving
+  });
+}
+
+function newTask() {
+  if (!gapi.auth.getToken()) return handleAuthClick();
+  var row = taskRow({});
+  $('#claire').prepend(row);
+  row.children().first().focus();
 }

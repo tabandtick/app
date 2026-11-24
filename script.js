@@ -53,7 +53,7 @@ function updateToDoCount() {
 }
 
 function updateCheckboxStatus() {
-	$('ul').on('change', function(event) {
+	$('ul').on('change', 'input[type=checkbox]', function(event) {
 	    if($(event.target).is(":checked")) {
 	        $(event.target).parent().children().first().addClass('checked');
           var completedID = $(event.target).parent().children().first().attr('id');
@@ -71,14 +71,15 @@ $("#delete-task-button").click(function (event) {
   console.log("Delete button pressed");
   var deletedID = $('#claire').children().children().first().attr('id');
   console.log('Will attempt to delete task ' + deletedID);
-  $('#claire').children().children().first().remove(); //removes task
-  $('#claire').children().children().first().remove(); //removes checkbox
+  var first = $('#claire').children().children().first();
+  if (first[0]) first[0].deleted = true;
+  first.parent().remove(); //removes task and checkbox
   deleteTask(deletedID);
   console.log('Delete button function completed');
 });
 
 $("#new-task-button").click(function (event) {
-  insertTask();
+  newTask();
 });
 
 function toggleToDoCheckboxes() {
@@ -144,6 +145,7 @@ function keydown(event) {
 				event.preventDefault();
         // console.log(currentToDo.attr('id'));
         var deletedID = currentToDo.attr('id');
+        currentToDo[0].deleted = true;
         deleteTask(deletedID);
 				currentToDoListItem.remove();
 				if (currentToDoListPosition == 1) {
@@ -151,6 +153,7 @@ function keydown(event) {
 				}
 				else {
 					previousToDo.val(previousToDoText + currentToDoText);
+					saveTitle(previousToDo);
 					previousToDo.setCursorPosition(previousToDoText.length);
 				}
 			}
@@ -187,6 +190,7 @@ function keydown(event) {
 $(document).ready(function() {
 
 	lastToDoList.on('keydown', ".todo", keydown);
+	lastToDoList.on('focusout', ".todo", function() { saveTitle($(this)); });
 	lastToDoList.on('input', ".todo", updateToDoCount);
 	lastToDoList.on('input', ".todo", toggleToDoCheckboxes);
 
