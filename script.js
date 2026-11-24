@@ -65,8 +65,12 @@ $("#delete-task-button").click(function (event) {
     showMessage('Click a task first, then Delete Task.', null, null, 4000);
     return;
   }
+  var row = selected.parent();
+  var following = (row.next().length ? row.next() : row.prev()).children('.todo');
   removeRow(selected, 'Task deleted.');
   selected = $();
+  // Ready to delete the next one. Caret at the end, so Backspace edits its text.
+  if (following.length) following.setCursorPosition(following.val().length);
 });
 
 $("#new-task-button").click(function (event) {

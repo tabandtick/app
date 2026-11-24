@@ -105,10 +105,31 @@ function getPage(tasks, pageToken) {
   }, showLogIn);
 }
 
+// Google doesn't send tasks in order. Position sorts tasks that share a parent,
+// so put each task's subtasks straight after it.
+function inOrder(tasks) {
+  var ids = {}, children = {}, sorted = [];
+  $.each(tasks, function(i, task) { ids[task.id] = true; });
+  $.each(tasks, function(i, task) {
+    var parent = ids[task.parent] ? task.parent : '';
+    (children[parent] = children[parent] || []).push(task);
+  });
+  (function add(parent) {
+    var list = (children[parent] || []).sort(function(a, b) {
+      return a.position < b.position ? -1 : a.position > b.position ? 1 : 0;
+    });
+    $.each(list, function(i, task) {
+      sorted.push(task);
+      add(task.id);
+    });
+  })('');
+  return sorted;
+}
+
 function showTasks(tasks) {
   tasksLoaded = true;
   showStatus('');
-  $('#claire').append($.map(tasks, taskRow));
+  $('#claire').append($.map(inOrder(tasks), taskRow));
   updateToDoCount();
   toggleToDoCheckboxes();
   if (!tasks.length) $(document.body).append($('<p>No tasks</p>'));
@@ -134,6 +155,7 @@ function taskRow(task) {
   var todo = $('<input type="text" class="todo"/>').toggleClass('checked', done).val(task.title || '');
   if (task.id) todo.attr('id', task.id);
   todo[0].savedTitle = task.title || '';
+  todo[0].parentTask = task.parent;
   return $('<li></li>').append(todo, $('<input type="checkbox"/>').prop('checked', done));
 }
 
@@ -146,6 +168,27 @@ function isUnsaved(todo) {
   return todo.val() !== (el.savedTitle || '');
 }
 
+// The nearest row above that Google knows about, or undefined.
+function savedRowAbove(todo) {
+  return todo.parent().prevAll().children('.todo').filter('[id]').first()[0];
+}
+
+// Where to create a task: after the row above it, or at the top.
+function placement(todo) {
+  var above = savedRowAbove(todo);
+  if (!above) return '';
+  return '?previous=' + encodeURIComponent(above.id) +
+    (above.parentTask ? '&parent=' + encodeURIComponent(above.parentTask) : '');
+}
+
+// A new row waits for a new row above it, so that they are created in order.
+function mustWait(todo) {
+  var above = todo.parent().prev().children('.todo');
+  if (!above[0] || above.attr('id') || above[0].failed || !isUnsaved(above)) return false;
+  saveTitle(above);
+  return true;
+}
+
 // Save a row's text: create the task the first time, then update its title.
 function saveTitle(todo) {
   var el = todo[0];
@@ -154,12 +197,14 @@ function saveTitle(todo) {
   if (el.saving || !isUnsaved(todo)) return;
   var title = todo.val();
   var id = todo.attr('id');
+  if (!id && mustWait(todo)) return saveSoon(todo);
   el.saving = true;
-  api(id ? 'PATCH' : 'POST', id ? '/' + id : '', { title: title }, function(result) {
-    el.saving = false;
+  api(id ? 'PATCH' : 'POST', id ? '/' + id : placement(todo), { title: title }, function(result) {
+    el.saving = el.failed = false;
     el.savedTitle = title;
     if (!id) {
       todo.attr('id', result.id);
+      el.parentTask = result.parent;
       if (el.gone) return deleteTask(todo);
       var box = todo.siblings('input[type=checkbox]');
       if (box.prop('checked')) setCompleted(box);
@@ -167,6 +212,7 @@ function saveTitle(todo) {
     saveTitle(todo); // the text may have changed while saving
   }, function(status) {
     el.saving = false;
+    el.failed = true;
     if (!el.gone) showFailure('Could not save your changes.', status, saveAll);
   });
 }
@@ -183,30 +229,36 @@ function saveAll() {
   $('.todo').each(function() { saveTitle($(this)); });
 }
 
-var undoable; // the latest removal, until it is undone or becomes final
+var removals = []; // rows hidden but not yet deleted from Google, oldest first
 
 // Hide a row now and delete it from Google in a few seconds, unless undone.
 function removeRow(todo, text, onUndo) {
-  finishRemoval();
   var row = todo.parent();
-  var removal = { todo: todo, row: row, next: row.next(), prev: row.prev(), list: row.parent(), onUndo: onUndo };
+  var removal = { todo: todo, row: row, text: text, next: row.next(), prev: row.prev(), list: row.parent(), onUndo: onUndo };
   clearTimeout(todo[0].timer);
   todo[0].deleted = true; // before detaching, which fires focusout
   row.removeClass('selected').detach();
-  undoable = removal;
-  removal.timer = setTimeout(finishRemoval, 7000);
-  showMessage(text, 'Undo', undoRemoval);
+  removals.push(removal);
+  removal.timer = setTimeout(function() { finishRemoval(removal); }, 7000);
+  showUndo();
   updateToDoCount();
 }
 
+function showUndo() {
+  var last = removals[removals.length - 1];
+  var more = removals.length > 1 ? ' ' + removals.length + ' changes can be undone.' : '';
+  if (last) showMessage(last.text + more, 'Undo', undoRemoval);
+}
+
+// Undo the latest removal. Earlier ones can be undone after it.
 function undoRemoval() {
-  var r = undoable;
+  var r = removals.pop();
   if (!r) return;
-  undoable = null;
   clearTimeout(r.timer);
   putBack(r);
   if (r.onUndo) r.onUndo();
   saveTitle(r.todo);
+  showUndo();
 }
 
 function putBack(r) {
@@ -218,12 +270,13 @@ function putBack(r) {
   toggleToDoCheckboxes();
 }
 
-function finishRemoval() {
-  var r = undoable;
-  if (!r) return;
-  undoable = null;
+function finishRemoval(r) {
+  removals.splice($.inArray(r, removals), 1);
   clearTimeout(r.timer);
-  if ($('#message button').text() === 'Undo') hideMessage(); // leave any other message up
+  if ($('#message button').text() === 'Undo') { // leave any other message up
+    hideMessage();
+    showUndo();
+  }
   r.todo[0].gone = true;
   deleteTask(r.todo, r);
 }
@@ -260,21 +313,19 @@ function flush() {
     if (!isUnsaved(todo) || (el.saving && !id)) return;
     clearTimeout(el.timer);
     el.saving = true;
-    fetch(url + (id ? '/' + id : ''), { method: id ? 'PATCH' : 'POST', headers: headers, keepalive: true, body: JSON.stringify({ title: title }) })
+    fetch(url + (id ? '/' + id : placement(todo)), { method: id ? 'PATCH' : 'POST', headers: headers, keepalive: true, body: JSON.stringify({ title: title }) })
       .then(function(r) { if (!r.ok) throw r; return r.json(); })
       .then(function(task) { todo.attr('id', task.id); el.savedTitle = title; })
       .catch(function() {})
       .then(function() { el.saving = false; });
   });
-  var r = undoable;
-  if (r) {
-    undoable = null;
+  $.each(removals.splice(0), function(i, r) {
     clearTimeout(r.timer);
-    hideMessage();
     r.todo[0].gone = true;
-    var rid = r.todo.attr('id');
-    if (rid) fetch(url + '/' + rid, { method: 'DELETE', headers: headers, keepalive: true }).catch(function() {});
-  }
+    var id = r.todo.attr('id');
+    if (id) fetch(url + '/' + id, { method: 'DELETE', headers: headers, keepalive: true }).catch(function() {});
+  });
+  if ($('#message button').text() === 'Undo') hideMessage();
 }
 
 $(window).on('pagehide', flush);
