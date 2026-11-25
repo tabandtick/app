@@ -971,6 +971,7 @@ function mergeRows(target, source) {
 // Delete a row with nothing in it. Undo brings back the title it had.
 function removeBlank(todo, next, caret) {
   var el = todo[0];
+  if (hasOpenSubtasks(todo)) return;
   if (!todo.attr('id') && !el.saving) { // never saved, so there's nothing to undo
     todo.parent().remove();
     refreshRows();

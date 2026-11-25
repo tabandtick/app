@@ -110,14 +110,11 @@ function keydown(event) {
 				event.preventDefault();
 				mergeRows(previous, todo);
 			}
-			else if (!completed && !length && next.length) {
+			else if (!length && (next.length || el.id)) {
 				event.preventDefault();
-				var blank = row.find('.notes').val() === '' && row.find('.due').val() === '' && !subtaskRows(todo).length;
-				if (blank) removeBlank(todo, next, 0);
-				else {
-					removeRow(todo);
-					next.setCursorPosition(0);
-				}
+				// If its subtasks go too, the next row is the one after them
+				next = row.nextAll('li').not(subtaskRows(todo)).first().children('.todo');
+				removeBlank(todo, next, 0);
 			}
 		break;
 
