@@ -89,10 +89,10 @@ function keydown(event) {
 		return;
 	}
 
-	// Tab at the start indents, and Shift+Tab moves out; anywhere else, or if it
-	// can't be done, they move focus as usual. So they do in a row reached by Tab.
+	// Tab indents and Shift+Tab moves out, wherever the caret is. If that can't be
+	// done, or the row was reached by Tab, they move focus as usual.
 	if (code === 9) {
-		if (position !== 0 || !caret || command || event.altKey || el.tabbedTo) return;
+		if (command || event.altKey || el.tabbedTo) return;
 		var pressed = tabbing;
 		tabbing = false; // moving the row focuses it again, which isn't reaching it by Tab
 		if (moveRow(todo, event.shiftKey ? 'outdent' : 'indent')) event.preventDefault();

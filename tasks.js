@@ -1195,7 +1195,7 @@ function moveRow(todo, how) {
   if (how === 'outdent' && todo.hasClass('checked') && row.hasClass('subtask')) return moveOutTicked(todo);
   if (!row.parent().is('.claire') || todo.hasClass('checked')) return;
   var sub = row.hasClass('subtask');
-  var caret = document.activeElement === todo[0] ? todo[0].selectionStart : null;
+  var caret = document.activeElement === todo[0] ? [todo[0].selectionStart, todo[0].selectionEnd] : null;
   var other, above, moved = false;
   if (how === 'subtask') return addSubtask(todo);
   if (how === 'top') {
@@ -1222,7 +1222,7 @@ function moveRow(todo, how) {
     place(todo, row.nextAll('li:not(.subtask)').first(), undefined);
     moved = true;
   }
-  if (caret !== null) todo.setCursorPosition(caret);
+  if (caret) todo.setCursorPosition(caret[0], caret[1]);
   return moved;
 }
 

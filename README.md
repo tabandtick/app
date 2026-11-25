@@ -16,7 +16,7 @@ server or build step. Not made or endorsed by Google.
 - **Enter** splits a row in two. **Backspace** at the start joins it to the row
   above, and **Delete** at the end joins the next one to it.
 - **Drag the handle** to move a task: right to make it a subtask, left to move out.
-- **Tab** at the start of a task makes it a subtask, and **Shift+Tab** moves it out.
+- **Tab** makes a task a subtask, and **Shift+Tab** moves it out.
 - **Alt+up/down** moves a task. **Cmd/Ctrl+]** and **[** indent it from anywhere.
 - **Completed** tasks load as you scroll.
 - **Lists** appear side by side. Untick one in the sidebar to hide it. The menu on a
