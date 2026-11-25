@@ -20,7 +20,8 @@ server or build step. Not made or endorsed by Google.
 - **Alt+up/down** moves a task. **Cmd/Ctrl+]** and **[** indent it from anywhere.
 - **Lists** are in the sidebar. Click a list's name above its tasks to rename it.
 
-Completing, deleting and joining can be undone for 7 seconds. Google is only told
+**Cmd/Ctrl+Z** undoes completing, moving, indenting and splitting, and deleting and
+joining within 7 seconds. If you have typed since, it undoes typing instead. Google is only told
 to delete anything once that time is up, or when the page closes.
 
 ## Known limits

@@ -207,6 +207,7 @@ function anyUnsaved() {
 }
 
 function clearTasks() {
+  undoStack = [];
   flush(); // finishes any deletes
   session++;
   moves = [];
@@ -498,7 +499,7 @@ function sortDone() {
 
 // Tick or untick. The row moves between the lists once Google agrees, except that
 // a ticked subtask stays with its open parent.
-function setCompleted(checkbox, after) {
+function setCompleted(checkbox, after, quiet) {
   var todo = checkbox.siblings('.todo');
   var row = todo.parent();
   var done = checkbox.prop('checked');
@@ -512,15 +513,15 @@ function setCompleted(checkbox, after) {
     var here = row.parent().is('#claire');
     if (here && (!done || openParent(todo).length)) {
       refreshRows();
-      if (done) offerUntick(checkbox, []);
+      if (done) offerUntick(checkbox, [], quiet);
     } else if (done) {
       var subtasks = subtaskRows(todo).children('.todo');
       row.removeClass('selected');
       $('#done-list').prepend(row, subtasks.filter('.checked').parent().removeClass('selected'));
       sortDone();
       var open = subtasks.not('.checked').get();
-      if (open.length) followSubtasks(checkbox, open);
-      else offerUntick(checkbox, []);
+      if (open.length) followSubtasks(checkbox, open, quiet);
+      else offerUntick(checkbox, [], quiet);
     } else {
       var along = subtaskRows(todo);
       row.removeClass('selected');
@@ -530,6 +531,7 @@ function setCompleted(checkbox, after) {
       reload(); // puts it back in its place
     }
     renderMeta(row);
+    if (!done && !quiet) canUndo(function() { return live(todo).length && !live(todo).hasClass('checked'); }, function() { undoTick([todo], true); });
     if (after) after();
   }, function(status) {
     checkbox.prop('checked', !done);
@@ -538,27 +540,26 @@ function setCompleted(checkbox, after) {
   });
 }
 
-function offerUntick(checkbox, subtasks) {
-  if (removals.length) return; // keep the undo for a delete
+function offerUntick(checkbox, subtasks, quiet) {
+  var todos = $.map([checkbox[0]].concat(subtasks), function(box) { return $(box).siblings('.todo'); });
+  function can() { return live(todos[0]).hasClass('checked'); }
+  function undo() { undoTick(todos, false); }
+  if (quiet) return;
+  canUndo(can, undo);
+  if (removals.length) return; // keep the button for a delete
   var count = subtasks.length;
   showMessage('Task ' + (count ? 'and ' + count + ' subtask' + (count > 1 ? 's ' : ' ') : '') + 'completed.', 'Undo', function() {
-    checkbox.prop('checked', false);
-    setCompleted(checkbox, function() { // then its subtasks, which come back with it
-      $.each(subtasks, function(i, box) {
-        $(box).prop('checked', false);
-        setCompleted($(box));
-      });
-    });
+    if (can()) undo();
   }, 7000);
 }
 
 // Google decides whether completing a task completes its subtasks, so ask it.
-function followSubtasks(checkbox, subtasks) {
+function followSubtasks(checkbox, subtasks, quiet) {
   var left = subtasks.length, moved = [];
   function next() {
     if (--left) return;
     if (moved.length) sortDone();
-    offerUntick(checkbox, moved);
+    offerUntick(checkbox, moved, quiet);
     reload();
   }
   $.each(subtasks, function(i, el) {
@@ -759,6 +760,57 @@ function saveAll() {
   $('.todo').each(function() { saveTask($(this)); });
 }
 
+// ---- Cmd+Z. Each entry has run(), and can() to say whether it still makes sense.
+
+var undoStack = [];
+var typed = false;   // typing since the last entry, which the browser undoes itself
+var undoing = false; // so that undoing isn't itself added
+
+function canUndo(can, run) {
+  if (undoing) return;
+  typed = false;
+  undoStack.push({ can: can, run: run });
+  if (undoStack.length > 100) undoStack.shift();
+}
+
+// Undo the latest thing that can be. Returns whether anything was.
+function undoLast() {
+  while (undoStack.length) {
+    var entry = undoStack.pop();
+    if (!entry.can()) continue;
+    undoing = true;
+    if ($('#message button').text() === 'Undo') hideMessage();
+    try {
+      entry.run();
+      showUndo(); // for any deletes still waiting
+    } finally {
+      undoing = false;
+    }
+    return true;
+  }
+  return false;
+}
+
+// The row on screen for a task, as refreshing the list makes new ones.
+function live(todo) {
+  var el = todo && todo[0];
+  if (!el || el.gone) return $();
+  if ($.contains(document, el)) return todo;
+  return el.id && !el.deleted ? $('ul.list .todo').filter(function() { return this.id === el.id; }) : $();
+}
+
+function undoTick(todos, done) {
+  var boxes = $.map(todos, function(todo) { return live(todo).siblings('input[type=checkbox]').get(); });
+  if (!boxes.length) return;
+  $(boxes[0]).prop('checked', done);
+  setCompleted($(boxes[0]), function() { // then its subtasks, which come back with it
+    $.each(boxes.slice(1), function(i, box) {
+      $(box).prop('checked', done);
+      setCompleted($(box), null, true);
+    });
+  }, true);
+}
+
 // ---- Deleting and joining, with undo
 
 var removals = []; // rows hidden but not yet deleted from Google, oldest first
@@ -776,6 +828,7 @@ function removeRow(todo, message, onUndo) {
   rows.removeClass('selected').detach();
   removals.push(removal);
   removal.timer = setTimeout(function() { finishRemoval(removal); }, 7000);
+  canUndo(function() { return removals[removals.length - 1] === removal; }, undoRemoval);
   showUndo();
   refreshRows();
 }
@@ -845,6 +898,7 @@ function mergeRows(target, source) {
     notes: before.notes + (before.notes && from.notes ? '\n' : '') + from.notes,
     due: before.due || from.due
   });
+  source[0].deleted = true; // moving focus mustn't save it first
   target.setCursorPosition(before.title.length);
   saveTask(target);
   removeRow(source, 'Tasks joined.', function() {
@@ -906,12 +960,20 @@ function nextMove() {
 function place(todo, before, parent) {
   var rows = todo.parent().add(subtaskRows(todo));
   var was = { above: todo.parent().prev()[0], parent: todo[0].parentTask };
+  var above = todo.parent().prev().children('.todo'), below = rows.last().next().children('.todo');
   if (before && before.length) before.before(rows);
   else $('#claire').append(rows);
   todo[0].parentTask = parent;
   todo.parent().toggleClass('subtask', !!parent);
   refreshRows();
-  if (was.above !== todo.parent().prev()[0] || was.parent !== parent) moveTask(todo);
+  if (was.above === todo.parent().prev()[0] && was.parent === parent) return;
+  moveTask(todo);
+  canUndo(function() { return live(todo).closest('#claire').length; }, function() {
+    var back = live(above).closest('#claire li'), next = live(below).closest('#claire li');
+    var row = live(todo);
+    place(row, next.length ? next : back.length ? back.nextAll('li').not(row.parent().add(subtaskRows(row))).first() : above.length ? $() : $('#claire li').first(), was.parent);
+    row.focus();
+  });
 }
 
 // The rows of a top-level task and its subtasks, in order.

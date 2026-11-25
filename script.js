@@ -62,6 +62,7 @@ function splitRow(todo) {
 	added.setCursorPosition(0);
 	saveSoon(todo);
 	saveSoon(added);
+	canUndo(function() { return live(todo).length && live(added).length; }, function() { mergeRows(live(todo), live(added)); });
 }
 
 function keydown(event) {
@@ -242,6 +243,7 @@ $(document).ready(function() {
 			this.setRangeText(pasted.trim().replace(/\s*[\r\n]+\s*/g, ' '), this.selectionStart, this.selectionEnd, 'end');
 			$(this).trigger('input');
 		})
+		.on('input', '.todo, .notes, .due', function() { typed = true; })
 		.on('input change', '.todo, .notes, .due', function() {
 			var row = $(this).closest('li');
 			renderMeta(row);
@@ -288,6 +290,14 @@ $(document).ready(function() {
 			if (event.which === 27) { $(this).val((currentList() || {}).title || ''); this.blur(); }
 		});
 	$('#log-out-button').click(logOut);
+	// Cmd+Z, unless it should undo typing
+	document.addEventListener('keydown', function(event) {
+		if (event.key.toLowerCase() !== 'z' || !(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey) return;
+		var field = $(event.target).is('input:not([type=checkbox]), textarea');
+		if (field && (typed || !$(event.target).closest('ul.list').length)) return;
+		if (undoLast()) event.preventDefault();
+	});
+
 	// Was focus moved here by the Tab key? Any other key or a click says no.
 	document.addEventListener('keydown', function(event) {
 		tabbing = event.key === 'Tab';
