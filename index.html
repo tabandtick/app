@@ -20,10 +20,11 @@
     </header>
 
     <nav id="side" aria-label="Lists">
+      <button type="button" id="create"><span aria-hidden="true">+</span> New task</button>
+      <button type="button" id="all-lists">All lists</button>
       <h2>Lists</h2>
       <ul id="lists"></ul>
-      <button type="button" id="new-list">+ New list</button>
-      <form id="new-list-form"><input type="text" aria-label="Name of the new list" placeholder="List name" maxlength="1024"></form>
+      <button type="button" id="new-list"><span aria-hidden="true">+</span> New list</button>
     </nav>
 
     <main>
@@ -31,16 +32,27 @@
         <h2>A fast to-do list in your new tab</h2>
         <p>Works with Google Tasks. Log in to see your tasks.</p>
       </div>
+      <p id="none-shown">All your lists are hidden. Tick one in the sidebar to show it.</p>
+      <div id="cards"></div>
+    </main>
 
-      <div id="card">
-        <div id="card-head">
-          <input type="text" id="list-title" aria-label="List name" maxlength="1024" spellcheck="false">
+    <div id="card-template" hidden>
+      <section class="card">
+        <div class="card-head">
+          <input type="text" class="list-title" aria-label="List name" maxlength="1024" spellcheck="false">
+          <button type="button" class="more" aria-label="List options" aria-haspopup="true" aria-expanded="false">&#8942;</button>
+          <div class="menu" role="menu">
+            <button type="button" role="menuitem" data-list-do="rename">Rename</button>
+            <button type="button" role="menuitem" data-list-do="hide">Hide</button>
+            <button type="button" role="menuitem" data-list-do="delete">Delete list</button>
+          </div>
         </div>
-        <button type="button" id="new-task-button">+ Add a task</button>
+        <button type="button" class="new-task"><span aria-hidden="true">+</span> Add a task</button>
+        <p class="note"></p>
 
-        <ul class="list" id="claire"></ul>
+        <ul class="list claire"></ul>
 
-        <div id="empty">
+        <div class="empty">
           <svg width="180" height="132" viewBox="0 0 180 132" fill="none" aria-hidden="true">
             <rect x="30" y="6" width="120" height="120" rx="12" fill="var(--tint)"/>
             <rect x="46" y="26" width="20" height="20" rx="10" fill="var(--accent)"/>
@@ -55,19 +67,31 @@
           </svg>
           <h2>Nothing to do</h2>
           <p>Add a task and it&rsquo;ll appear in Google Tasks too.</p>
-          <button type="button" id="empty-new">Add a task</button>
+          <button type="button" class="empty-new">Add a task</button>
         </div>
 
-        <div id="done">
-          <button type="button" id="done-toggle" aria-expanded="false" aria-controls="done-body">Completed</button>
-          <div id="done-body">
-            <ul class="list" id="done-list"></ul>
-            <p id="done-none">Nothing completed yet</p>
-            <button type="button" id="done-more">Load more</button>
+        <div class="done">
+          <button type="button" class="done-toggle" aria-expanded="false">Completed</button>
+          <div class="done-body">
+            <ul class="list done-list"></ul>
+            <p class="done-none">Nothing completed yet</p>
+            <button type="button" class="done-more">Load more</button>
           </div>
         </div>
-      </div>
-    </main>
+      </section>
+    </div>
+
+    <dialog id="dialog">
+      <form>
+        <h2></h2>
+        <p></p>
+        <input type="text" maxlength="1024" aria-label="Name">
+        <div class="buttons">
+          <button type="button" class="cancel">Cancel</button>
+          <button type="submit" class="ok"></button>
+        </div>
+      </form>
+    </dialog>
 
     <div id="drop-line"></div>
     <div id="message" role="status"><span></span> <button type="button"></button></div>

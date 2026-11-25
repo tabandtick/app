@@ -17,13 +17,13 @@ $.fn.setCursorPosition = function(start, end) {
 };
 
 function updateToDoCount() {
-	var count = $('#claire .todo').not('.checked').filter(function() { return this.value.length > 0; }).length;
-	$('#empty').toggle(tasksLoaded && !$('#claire li').length);
-	var list = currentList();
-	if (list && tasksLoaded) {
-		list.count = count;
-		$('#lists [aria-current] .count').text(count);
-	}
+	$('#cards .card').each(function() {
+		var card = $(this), list = findList(this.list);
+		if (!this.loaded || !list) return;
+		card.find('.empty').toggle(!card.find('.claire li').length);
+		list.count = card.find('.claire .todo').not('.checked').filter(function() { return this.value.length > 0; }).length;
+		showCount(list);
+	});
 }
 
 // A row only gets a tick box once it has a title.
@@ -36,7 +36,11 @@ function toggleToDoCheckboxes() {
 var selected = $();
 var tabbing = false;
 
-$('#new-task-button, #empty-new').click(function() { newTask(); });
+// The card last used, for the Create button.
+function currentCard() {
+	var card = selected.closest('.card');
+	return card.length ? card : $('#cards .card').first();
+}
 
 function deleteAndMoveOn(todo) {
 	if (hasOpenSubtasks(todo)) return;
@@ -54,7 +58,7 @@ function deleteAndMoveOn(todo) {
 function splitRow(todo) {
 	var position = todo[0].selectionStart, title = todo.val();
 	var below = subtaskRows(todo).last();
-	var row = taskRow({ parent: todo[0].parentTask });
+	var row = taskRow({ parent: todo[0].parentTask }, todo[0].card);
 	var added = row.children('.todo').val(title.slice(position));
 	(below.length ? below : todo.parent()).after(row);
 	todo.val(title.slice(0, position));
@@ -71,7 +75,7 @@ function keydown(event) {
 	var position = el.selectionStart, length = todo.val().length;
 	var caret = el.selectionEnd === position; // nothing selected
 	var modified = event.shiftKey || event.metaKey || event.altKey || event.ctrlKey;
-	var completed = row.parent().is('#done-list');
+	var completed = row.parent().is('.done-list');
 	var previous = row.prev().children('.todo'), next = row.next().children('.todo');
 	var wrapped = el.clientHeight > 1.5 * parseFloat($(el).css('line-height'));
 
@@ -146,11 +150,44 @@ function toggleDetails(row) {
 function openMenu(row) {
 	row.addClass('menu-open').children('.more').attr('aria-expanded', 'true');
 	var menu = row.children('.menu').removeClass('up');
+	menu.children('[data-to]').remove();
+	var todo = row.children('.todo');
+	if (todo[0] && row.parent().is('.claire') && !todo.hasClass('checked')) {
+		menu.children('[data-move=delete]').before($.map(lists, function(list) {
+			if (list.id === todo[0].card[0].list) return null;
+			return $('<button type="button" role="menuitem"></button>').attr('data-to', list.id).text('Move to ' + list.title);
+		}));
+	}
 	if (menu[0].getBoundingClientRect().bottom > window.innerHeight) menu.addClass('up');
 }
 
 function closeMenu() {
-	$('li.menu-open').removeClass('menu-open').children('.more').attr('aria-expanded', 'false');
+	$('.menu-open').removeClass('menu-open').children('.more').attr('aria-expanded', 'false');
+}
+
+// A dialog with a title, some text, perhaps a field, and Cancel. Calls done with the
+// field's value.
+function ask(options, done) {
+	var dialog = $('#dialog'), field = dialog.find('input'), button = dialog.find('.ok');
+	dialog.find('h2').text(options.title);
+	dialog.find('p').text(options.text || '').toggle(!!options.text);
+	field.toggle(options.field !== undefined).val(options.field || '').attr('placeholder', options.placeholder || '');
+	button.text(options.button).toggleClass('danger', !!options.danger);
+	function ready() { button.prop('disabled', options.field !== undefined && !$.trim(field.val())); }
+	field.off('input').on('input', ready);
+	ready();
+	dialog.find('form').off('submit').on('submit', function(event) {
+		event.preventDefault();
+		dialog[0].close();
+		done($.trim(field.val()));
+	});
+	dialog[0].showModal();
+	if (options.field !== undefined) field.focus().select();
+	else dialog.find('.cancel').focus();
+}
+
+function askNewList() {
+	ask({ title: 'New list', field: '', placeholder: 'Name', button: 'Create' }, createList);
 }
 
 // ---- Dragging. A line shows where the row will land; moving right or left makes
@@ -158,23 +195,31 @@ function closeMenu() {
 
 var drag = null;
 
-function dropPlace(y, dx) {
-	var rows = $('#claire li').not(drag.rows);
+function dropPlace(x, y, dx) {
+	var card = $('#cards .card').filter(function() {
+		var box = this.getBoundingClientRect();
+		return x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
+	});
+	if (!card.length || !card[0].loaded) card = drag.card;
+	var other = !card.is(drag.card);
+	var rows = card.find('.claire li').not(drag.rows);
 	var i = rows.filter(function() {
 		var box = this.getBoundingClientRect();
 		return box.top + box.height / 2 < y;
 	}).length;
-	if (drag.rows.length > 1) while (i < rows.length && rows.eq(i).hasClass('subtask')) i++; // stay out of another family
+	if (drag.rows.length > 1 || other) while (i < rows.length && rows.eq(i).hasClass('subtask')) i++; // stay out of another family
 	var above = rows.eq(i - 1), below = rows.eq(i);
 	if (i === 0) above = $();
 	var level = drag.level + (dx > 24 ? 1 : dx < -24 ? -1 : 0);
 	if (below.hasClass('subtask')) level = 1; // between a task and its subtasks
-	if (drag.rows.length > 1 || !above.length) level = 0;
+	if (drag.rows.length > 1 || !above.length || other) level = 0;
 	var todo = above.children('.todo');
 	var parent = level > 0 ? (above.hasClass('subtask') ? todo[0].parentTask : todo.attr('id')) : undefined;
-	var box = (below[0] || above[0] || drag.rows[0]).getBoundingClientRect();
-	var edge = below.length || !above.length ? box.top : box.bottom;
-	return { below: below, parent: parent, top: edge };
+	var list = card.find('.claire')[0].getBoundingClientRect();
+	var box = below[0] || above[0] ? (below[0] || above[0]).getBoundingClientRect() : list;
+	// The task it goes after in another list: the nearest open one that isn't a subtask
+	var after = above.add(above.prevAll()).not('.subtask').children('.todo[id]').not('.checked').last().attr('id');
+	return { card: card, other: other, below: below, parent: parent, after: after, top: below.length || !above.length ? box.top : box.bottom, left: list.left, right: list.right };
 }
 
 function dragMove(event) {
@@ -185,10 +230,9 @@ function dragMove(event) {
 	drag.rows.addClass('dragging');
 	if (event.clientY < 60) window.scrollBy(0, -12);
 	if (event.clientY > window.innerHeight - 60) window.scrollBy(0, 12);
-	drag.place = dropPlace(event.clientY, event.clientX - drag.x);
-	var list = $('#claire')[0].getBoundingClientRect();
-	var left = list.left + parseFloat($('#claire').css('padding-left')) + (drag.place.parent ? 44 : 0);
-	$('#drop-line').css({ top: drag.place.top - 1, left: left, width: list.right - left }).show();
+	var place = drag.place = dropPlace(event.clientX, event.clientY, event.clientX - drag.x);
+	var left = place.left + (place.parent ? 44 : 0);
+	$('#drop-line').css({ top: place.top - 1, left: left, width: place.right - left }).show();
 }
 
 function dragEnd(event) {
@@ -197,15 +241,17 @@ function dragEnd(event) {
 	drag = null;
 	$('#drop-line').hide();
 	d.rows.removeClass('dragging');
-	if (event && event.type === 'pointerup' && d.place && $.contains(document, d.todo[0])) place(d.todo, d.place.below, d.place.parent);
+	if (!event || event.type !== 'pointerup' || !d.place || !$.contains(document, d.todo[0])) return;
+	if (d.place.other) moveToList(d.todo, d.place.card[0].list, d.place.after);
+	else place(d.todo, d.place.below, d.place.parent);
 }
 
 document.addEventListener('pointerdown', function(event) {
-	var handle = $(event.target).closest('#claire .handle');
+	var handle = $(event.target).closest('.claire .handle');
 	if (!handle.length || event.button || drag || handle.siblings('.todo').hasClass('checked')) return;
 	event.preventDefault(); // no text selection
 	var row = handle.parent(), todo = row.children('.todo');
-	drag = { todo: todo, rows: row.add(subtaskRows(todo)), x: event.clientX, y: event.clientY, level: row.hasClass('subtask') ? 1 : 0 };
+	drag = { todo: todo, card: todo[0].card, rows: row.add(subtaskRows(todo)), x: event.clientX, y: event.clientY, level: row.hasClass('subtask') ? 1 : 0 };
 });
 document.addEventListener('pointermove', dragMove);
 document.addEventListener('pointerup', dragEnd);
@@ -218,9 +264,9 @@ document.addEventListener('keydown', function(event) {
 
 $(document).ready(function() {
 
-	$('ul.list')
+	$('#cards')
 		.on('keydown', '.todo', keydown)
-		.on('focusin', 'li', function() {
+		.on('focusin', 'ul.list li', function() {
 			$('li.selected').removeClass('selected');
 			selected = $(this).addClass('selected').children('.todo');
 			if (selected[0]) selected[0].tabbedTo = tabbing;
@@ -246,9 +292,9 @@ $(document).ready(function() {
 			renderMeta(row);
 			saveSoon(row.children('.todo'));
 		})
-		.on('change', 'input[type=checkbox]', function() { setCompleted($(this)); })
+		.on('change', 'ul.list input[type=checkbox]', function() { setCompleted($(this)); })
 		.on('click', '.more', function() {
-			var row = $(this).parent(), open = row.hasClass('menu-open');
+			var row = $(this).parent(), open = row.hasClass('menu-open'); // a task, or a card's heading
 			closeMenu();
 			if (!open) openMenu(row);
 		})
@@ -260,32 +306,50 @@ $(document).ready(function() {
 			saveTask(row.children('.todo'));
 		});
 
-	$('ul.list').on('click', '[data-move]', function() {
+	$('#cards').on('click', 'ul.list [data-move]', function() {
 		var row = $(this).closest('li'), todo = row.children('.todo'), how = $(this).attr('data-move');
 		closeMenu();
 		if (how === 'details') toggleDetails(row);
 		else if (how === 'delete') deleteAndMoveOn(todo);
 		else moveRow(todo, how);
+	}).on('click', '[data-to]', function() {
+		var todo = $(this).closest('li').children('.todo'), to = $(this).attr('data-to');
+		closeMenu();
+		moveToList(todo, to);
+	}).on('click', '[data-list-do]', function() {
+		var card = $(this).closest('.card'), how = $(this).attr('data-list-do');
+		closeMenu();
+		if (how === 'rename') card.find('.list-title').focus().select();
+		else if (how === 'hide') showList(card[0].list, false);
+		else deleteList(card[0].list);
+	}).on('click', '.new-task, .empty-new', function() {
+		newTask($(this).closest('.card'));
+	}).on('click', '.done-toggle', function() {
+		toggleDone($(this).closest('.card'));
+	}).on('click', '.done-more', function() {
+		loadDone($(this).closest('.card'));
+	}).on('change', '.list-title', function() {
+		renameList($(this).closest('.card'), $.trim(this.value));
+	}).on('keydown', '.list-title', function(event) {
+		if (event.which === 13) this.blur();
+		if (event.which === 27) {
+			$(this).val((findList($(this).closest('.card')[0].list) || {}).title || '');
+			this.blur();
+		}
 	});
 	$(document).on('click', function(event) {
 		if (!$(event.target).closest('.menu, .more').length) closeMenu();
 	});
 	$('#authorize-button').click(handleAuthClick);
-	$('#lists').on('click', '[data-list]', function() { switchList($(this).attr('data-list')); });
+	$('#lists').on('change', 'input', function() { showList($(this).attr('data-list'), this.checked); });
+	$('#all-lists').click(showAllLists);
 	$('#side-toggle').click(function() { $('body').toggleClass('side-open'); });
-	$('#new-list').click(function() { $('#new-list-form').show().children('input').val('').focus(); });
-	$('#new-list-form').on('submit', function(event) {
-		event.preventDefault();
-		var title = $.trim($(this).hide().children('input').val());
-		if (title) createList(title);
-	}).on('keydown', function(event) {
-		if (event.which === 27) $(this).hide();
+	$('#create').click(function() {
+		$('body').removeClass('side-open');
+		newTask(currentCard());
 	});
-	$('#list-title').on('change', function() { renameList($.trim(this.value)); })
-		.on('keydown', function(event) {
-			if (event.which === 13) this.blur();
-			if (event.which === 27) { $(this).val((currentList() || {}).title || ''); this.blur(); }
-		});
+	$('#new-list').click(askNewList);
+	$('#dialog .cancel').click(function() { $('#dialog')[0].close(); });
 	$('#log-out-button').click(logOut);
 	// Cmd+Z, unless it should undo typing
 	document.addEventListener('keydown', function(event) {
@@ -304,8 +368,6 @@ $(document).ready(function() {
 		tabbing = false;
 		event.target.tabbedTo = false;
 	}, true);
-	$('#done-toggle').click(toggleDone);
-	$('#done-more').click(loadDone);
 	$(window).on('resize', autosizeAll).on('scroll resize', loadMoreIfNear);
 
 	updateToDoCount();

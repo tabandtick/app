@@ -19,7 +19,9 @@ server or build step. Not made or endorsed by Google.
 - **Tab** at the start of a task makes it a subtask, and **Shift+Tab** moves it out.
 - **Alt+up/down** moves a task. **Cmd/Ctrl+]** and **[** indent it from anywhere.
 - **Completed** tasks load as you scroll.
-- **Lists** are in the sidebar. Click a list's name above its tasks to rename it.
+- **Lists** appear side by side. Untick one in the sidebar to hide it. The menu on a
+  card renames, hides or deletes it, and a task's menu, or dragging, moves it to
+  another list.
 
 **Cmd/Ctrl+Z** undoes completing, moving, indenting and splitting, and deleting and
 joining within 7 seconds. If you have typed since, it undoes typing instead. Google is only told
@@ -29,7 +31,7 @@ to delete anything once that time is up, or when the page closes.
 
 - Stars, repeats, deadlines, times of day, attachments and reminders aren't in
   Google's API. Tasks assigned from Docs or Chat aren't shown.
-- Lists can't be deleted, and tasks can't be moved between lists.
+- A task with subtasks can't be moved to another list.
 - The website asks you to log in about once an hour, and in each new browser tab.
   The extension doesn't.
 

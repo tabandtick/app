@@ -11,7 +11,7 @@ function handleAuthResult(ok) {
   if (!ok) return showLogIn();
   if (tasksLoaded) return saveAll(); // logged in again: save what couldn't be saved
   showStatus('Loading\u2026');
-  listTasks();
+  start();
 }
 
 function handleAuthClick() {
@@ -79,9 +79,21 @@ function hideMessage() {
   $('#message').hide();
 }
 
+var lastReason = ''; // why Google last refused something
+var retryWait = 1000;
+
+// Is Google only asking us to wait? A new task isn't sent again after a server
+// fault, as it may have been made.
+function shouldRetry(method, answer) {
+  if (answer.status === 429) return true;
+  if (answer.status === 403) return /rate|quota|limit/i.test(answer.reason);
+  return answer.status >= 500 && method !== 'POST';
+}
+
 // Calls Google. done(result) on success, failed(status) if not; status is undefined
-// when Google couldn't be reached. A refused token is replaced and tried once more.
-function send(method, path, body, done, failed, again) {
+// when Google couldn't be reached. A refused token is replaced and tried once more,
+// and it waits its turn when there have been too many requests.
+function send(method, path, body, done, failed, again, tries) {
   var started = session;
   var options = { method: method, headers: { 'Authorization': 'Bearer ' + auth.token() } };
   if (body) {
@@ -90,10 +102,22 @@ function send(method, path, body, done, failed, again) {
   }
   fetch(API + path, options).then(function(response) {
     return response.text().then(function(text) {
-      return { ok: response.ok, status: response.status, result: response.ok && text ? JSON.parse(text) : null };
+      var answer = { ok: response.ok, status: response.status };
+      var data = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch (e) {
+        if (response.ok) throw e;
+      }
+      if (response.ok) answer.result = data;
+      else {
+        var error = (data && data.error) || {};
+        answer.reason = [error.errors && error.errors[0] && error.errors[0].reason, error.message].filter(Boolean).join(': ');
+      }
+      return answer;
     });
   }).catch(function(error) {
-    return { ok: false, error: error };
+    return { ok: false, reason: String(error) };
   }).then(function(answer) {
     if (started !== session) return;
     if (answer.ok) {
@@ -103,92 +127,149 @@ function send(method, path, body, done, failed, again) {
     if (answer.status === 401 && !again) {
       auth.expired(function(ok) {
         if (started !== session) return;
-        if (ok) send(method, path, body, done, failed, true);
+        if (ok) send(method, path, body, done, failed, true, tries);
         else if (failed) failed(401);
       });
       return;
     }
-    console.error(method + ' failed', answer.status || answer.error);
+    tries = tries || 0;
+    if (tries < 5 && shouldRetry(method, answer)) {
+      setTimeout(function() {
+        if (started === session) send(method, path, body, done, failed, again, tries + 1);
+      }, retryWait * Math.pow(2, tries) * (1 + Math.random() / 2));
+      return;
+    }
+    lastReason = answer.reason || '';
+    console.info('Google: ' + method + ' ' + (answer.status || '') + ' ' + lastReason);
     if (failed) failed(answer.status);
   });
 }
 
-// Calls Google about a task in the list on screen.
-function api(method, path, body, done, failed) {
-  send(method, 'lists/' + encodeURIComponent(listId) + '/tasks' + path, body, done, failed);
+// Calls Google about a task, in its own list.
+function api(todo, method, path, body, done, failed) {
+  send(method, 'lists/' + encodeURIComponent(todo[0].card[0].list) + '/tasks' + path, body, done, failed);
 }
 
 // Google's access runs out after about an hour, which shows up as a 401.
 function showFailure(text, status, retry) {
-  if (status === 401) showMessage(text + ' Please log in again.', 'Log in', handleAuthClick);
-  else showMessage(text, retry && 'Retry', retry, retry ? 0 : 6000);
+  if (status === 401) return showMessage(text + ' Please log in again.', 'Log in', handleAuthClick);
+  if (!status) text += ' Check your connection.';
+  else if (lastReason) text += ' Google said: ' + lastReason.replace(/^\w+: /, '');
+  showMessage(text, retry && 'Retry', retry, retry ? 0 : 6000);
 }
 
-// ---- Lists
+// ---- Lists. Each one on screen is a card, whose element holds:
+//   list  its id       loaded  whether its tasks are shown
+//   doneShown, doneWaiting  see Completed tasks
 
-var listId = remembered() || '@default'; // the list on screen
 var lists = [];
+var defaultList; // the id of the one that Google won't delete
 
-function remembered(id) {
+// The ids of the lists you've chosen not to show. Pass them to set them.
+var hiddenHere = [];
+
+function hiddenLists(ids) {
   try {
-    if (id !== undefined) localStorage.setItem('tabandtick-list', id);
-    return localStorage.getItem('tabandtick-list');
-  } catch (e) { // storage is blocked
-    return null;
+    if (ids) localStorage.setItem('tabandtick-hidden', JSON.stringify(ids));
+    return JSON.parse(localStorage.getItem('tabandtick-hidden')) || [];
+  } catch (e) { // storage is blocked, or not ours
+    if (ids) hiddenHere = ids;
+    return hiddenHere;
   }
 }
 
-function listTasks() {
-  fetchAll('showCompleted=false', function(tasks) {
-    if (tasksLoaded) return; // a late silent sign-in must not list them twice
+function isHidden(id) {
+  return $.inArray(id, hiddenLists()) >= 0;
+}
+
+function start() {
+  send('GET', 'users/@me/lists?maxResults=100', null, function(result) {
+    if (tasksLoaded) return; // a late silent sign-in must not show them twice
     tasksLoaded = true;
+    lists = (result && result.items) || [];
     showStatus('');
     $('body').addClass('signed-in');
-    showTasks(tasks);
-    loadTicked();
-    loadLists();
+    showLists();
+    send('GET', 'users/@me/lists/@default', null, function(list) { defaultList = list.id; });
   }, function(status) {
-    if (status === 404 && listId !== '@default') { // that list has been deleted
-      listId = '@default';
-      remembered('@default');
-      return listTasks();
-    }
     showLogIn();
-    showMessage('Logged in, but your tasks couldn\u2019t be loaded (' + (status || 'no connection') + ').', 'Retry', checkAuth);
+    showMessage('Logged in, but your lists couldn’t be loaded (' + (status || 'no connection') + ').', 'Retry', checkAuth);
   });
 }
 
-function loadLists() {
-  send('GET', 'users/@me/lists?maxResults=100', null, function(result) {
-    lists = (result && result.items) || [];
-    if (listId !== '@default') return showLists();
-    send('GET', 'users/@me/lists/@default', null, function(list) {
-      if (listId === '@default') listId = list.id; // same list, by its own name
-      showLists();
-    });
-  });
+function findList(id) {
+  return $.grep(lists, function(list) { return list.id === id; })[0];
 }
 
-function currentList() {
-  return $.grep(lists, function(list) { return list.id === listId; })[0];
+function cardFor(id) {
+  return $('#cards .card').filter(function() { return this.list === id; });
 }
 
+// The sidebar, and a card for each list that isn't hidden.
 function showLists() {
   $('#lists').empty().append($.map(lists, function(list) {
-    return $('<li></li>').append($('<button type="button"></button>')
-      .attr({ 'data-list': list.id, 'aria-current': list.id === listId ? 'true' : null })
-      .append($('<span class="name"></span>').text(list.title), $('<span class="count"></span>').text(list.count === undefined ? '' : list.count)));
+    return $('<li></li>').append($('<label></label>').append(
+      $('<input type="checkbox"/>').prop('checked', !isHidden(list.id)).attr('data-list', list.id),
+      $('<span class="name"></span>').text(list.title),
+      $('<span class="count"></span>').text(list.count === undefined ? '' : list.count)
+    ));
   }));
-  var list = currentList();
-  if (list && !$('#list-title').is(':focus')) $('#list-title').val(list.title);
-  updateToDoCount();
-  $.each(lists.slice(0, 15), function(i, other) {
-    if (other.id === listId || other.count !== undefined) return;
-    fetchAll('showCompleted=false', function(tasks) {
-      other.count = tasks.length;
-      $('#lists [data-list]').filter(function() { return $(this).attr('data-list') === other.id; }).find('.count').text(other.count);
-    }, null, null, null, other.id);
+  var hidden = $.grep(lists, function(list) { return isHidden(list.id); }).length;
+  $('#all-lists').attr('aria-current', hidden ? null : 'true');
+  $('#none-shown').toggle(tasksLoaded && lists.length > 0 && hidden === lists.length);
+  $('#cards .card').each(function() {
+    if (!findList(this.list) || isHidden(this.list)) $(this).remove();
   });
+  $.each(lists, function(i, list) {
+    if (isHidden(list.id)) return countHidden(list);
+    var card = cardFor(list.id), made = !card.length;
+    if (made) card = newCard(list);
+    if (made || !card.is($('#cards').children().eq(i))) $('#cards').append(card);
+    if (!card.find('.list-title').is(':focus')) card.find('.list-title').val(list.title);
+    if (made) loadCard(card);
+  });
+  refreshRows();
+}
+
+function newCard(list) {
+  var card = $('#card-template').children().clone();
+  card[0].list = list.id;
+  card[0].loaded = false;
+  card[0].doneShown = 0;
+  card[0].doneWaiting = [];
+  return card;
+}
+
+function loadCard(card) {
+  var list = card[0].list;
+  card.find('.note').show().text('Loading…');
+  fetchAll(list, 'showCompleted=false', function(tasks) {
+    if (card[0].loaded || !$.contains(document, card[0])) return;
+    card[0].loaded = true;
+    card.find('.note').hide();
+    showTasks(card, tasks);
+    loadTicked(card);
+  }, function(status) {
+    if (status === 404) { // deleted elsewhere
+      lists = $.grep(lists, function(other) { return other.id !== list; });
+      return showLists();
+    }
+    card.find('.note').text('Couldn’t load this list (' + (status || 'no connection') + '). ')
+      .append($('<button type="button">Retry</button>').click(function() { loadCard(card); }));
+  });
+}
+
+function countHidden(list) {
+  if (list.count !== undefined) return;
+  list.count = ''; // asked for
+  fetchAll(list.id, 'showCompleted=false', function(tasks) {
+    list.count = tasks.length;
+    showCount(list);
+  });
+}
+
+function showCount(list) {
+  $('#lists input').filter(function() { return $(this).attr('data-list') === list.id; }).siblings('.count').text(list.count);
 }
 
 // Wait for everything to be saved, then go on.
@@ -198,65 +279,89 @@ function settle(anyway, done) {
   (function wait() {
     if (!anyUnsaved()) return done();
     if (tries++ < 20) return setTimeout(wait, 250);
-    showMessage('Some changes couldn\u2019t be saved.', anyway, done);
+    showMessage('Some changes couldn’t be saved.', anyway, done);
   })();
 }
 
 function anyUnsaved() {
-  return moves.length > 0 || $('.todo').filter(function() { return this.saving || isUnsaved($(this)); }).length > 0;
+  return moves.length > 0 || ticking > 0 || $('.todo').filter(function() { return this.saving || isUnsaved($(this)); }).length > 0;
 }
 
-function clearTasks() {
-  undoStack = [];
-  ticking = 0;
-  flush(); // finishes any deletes
-  session++;
-  moves = [];
-  tasksLoaded = false;
-  doneShown = 0;
-  doneWaiting = [];
-  selected = $();
-  hideMessage();
-  closeMenu();
-  $('#claire, #done-list').empty();
-  $('#done').removeClass('open').hide();
-  $('#done-toggle').attr('aria-expanded', 'false');
-  refreshRows();
+function finishRemovals() {
+  while (removals.length) finishRemoval(removals[0]);
 }
 
-function switchList(id) {
-  $('body').removeClass('side-open');
-  if (id === listId) return;
-  settle('Switch anyway', function() {
-    clearTasks();
-    listId = id;
-    remembered(id);
-    var list = currentList();
-    $('#list-title').val(list ? list.title : '');
-    showStatus('Loading\u2026');
-    listTasks();
+function showList(id, show) {
+  if (show) {
+    hiddenLists($.grep(hiddenLists(), function(other) { return other !== id; }));
+    return showLists();
+  }
+  settle('Hide anyway', function() {
+    finishRemovals();
+    hiddenLists(hiddenLists().concat(id));
+    showLists();
   });
+}
+
+function showAllLists() {
+  hiddenLists([]);
+  showLists();
 }
 
 function createList(title) {
   send('POST', 'users/@me/lists', { title: title }, function(list) {
     lists.push(list);
-    switchList(list.id);
+    showLists();
+    newTask(cardFor(list.id));
   }, function(status) {
     showFailure('Could not create that list.', status);
   });
 }
 
-function renameList(title) {
-  var list = currentList();
+function renameList(card, title) {
+  var list = findList(card[0].list), field = card.find('.list-title');
   if (!list) return;
-  if (!title || title === list.title) return $('#list-title').val(list.title);
+  if (!title || title === list.title) return field.val(list.title);
   send('PATCH', 'users/@me/lists/' + encodeURIComponent(list.id), { title: title }, function() {
     list.title = title;
     showLists();
   }, function(status) {
-    $('#list-title').val(list.title);
+    field.val(list.title);
     showFailure('Could not rename that list.', status);
+  });
+}
+
+// Ask, saying what is in it. Deleting a list would also delete the originals of
+// any tasks in it assigned from Docs or Chat, so don't.
+function deleteList(id) {
+  var list = findList(id);
+  if (id === defaultList) return showMessage('Google doesn’t let your first list be deleted.', null, null, 5000);
+  settle('Go on anyway', function() {
+    finishRemovals();
+    fetchAll(id, 'showCompleted=true&showHidden=true&showAssigned=true', function(tasks) {
+      if (tasks.some(function(task) { return task.assignmentInfo; })) {
+        return showMessage('That list has tasks assigned from Docs or Chat, so delete it in Google Tasks instead.', null, null, 8000);
+      }
+      var done = $.grep(tasks, function(task) { return task.status === 'completed'; }).length;
+      if (tasks.length - done < cardFor(id).find('.claire .todo[id]').not('.checked').length) {
+        return showMessage('That list has changed, so it hasn\u2019t been deleted. Refresh and try again.', null, null, 8000);
+      }
+      ask({
+        title: 'Delete “' + list.title + '”?',
+        text: tasks.length ? 'It has ' + (tasks.length - done) + ' open and ' + done + ' completed tasks. They’ll be deleted from Google Tasks too, and this can’t be undone.' : 'It has no tasks. This can’t be undone.',
+        button: 'Delete', danger: true
+      }, function() {
+        send('DELETE', 'users/@me/lists/' + encodeURIComponent(id), null, function() {
+          lists = $.grep(lists, function(other) { return other.id !== id; });
+          showLists();
+          showMessage('List deleted.', null, null, 4000);
+        }, function(status) {
+          showFailure('Could not delete that list.', status);
+        });
+      });
+    }, function(status) {
+      showFailure('Could not check that list, so it hasn’t been deleted.', status);
+    });
   });
 }
 
@@ -265,14 +370,22 @@ function logOut() {
 }
 
 function endSession() {
-  clearTasks();
+  undoStack = [];
+  ticking = 0;
+  flush(); // finishes any deletes
+  session++;
+  moves = [];
+  tasksLoaded = false;
+  selected = $();
+  lists = [];
+  defaultList = undefined;
+  hideMessage();
+  closeMenu();
+  $('#cards, #lists').empty();
+  $('#none-shown').hide();
   loggedOut(true);
   auth.logout();
-  lists = [];
-  listId = '@default';
-  remembered('@default');
-  $('#lists').empty();
-  $('#list-title').val('');
+  hiddenLists([]);
   $('body').removeClass('signed-in side-open');
   showLogIn();
 }
@@ -280,11 +393,11 @@ function endSession() {
 // ---- Tasks
 
 // Google returns at most 100 tasks at a time.
-function fetchAll(query, done, failed, tasks, pageToken, list) {
-  var path = 'lists/' + encodeURIComponent(list || listId) + '/tasks?maxResults=100&' + query;
+function fetchAll(list, query, done, failed, tasks, pageToken) {
+  var path = 'lists/' + encodeURIComponent(list) + '/tasks?maxResults=100&' + query;
   send('GET', path + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''), null, function(result) {
     var all = (tasks || []).concat((result && result.items) || []);
-    if (result && result.nextPageToken) return fetchAll(query, done, failed, all, result.nextPageToken, list);
+    if (result && result.nextPageToken) return fetchAll(list, query, done, failed, all, result.nextPageToken);
     done(all);
   }, failed);
 }
@@ -310,24 +423,32 @@ function inOrder(tasks) {
   return sorted;
 }
 
-function showTasks(tasks) {
-  var ticked = $('#claire li').filter(function() { return $(this).children('.todo').hasClass('checked'); }).detach();
-  $('#claire').empty().append($.map(inOrder(tasks), taskRow));
-  $('#claire .todo').each(function() { // not indented if its parent isn't here
+function rows(card, tasks) {
+  return $.map(tasks, function(task) { return taskRow(task, card); });
+}
+
+function showTasks(card, tasks) {
+  var open = card.find('.claire'), active = document.activeElement;
+  var ticked = open.children().filter(function() { return $(this).children('.todo').hasClass('checked'); }).detach();
+  var unmade = open.children().filter(function() { return !$(this).children('.todo').attr('id'); }).detach(); // added while loading
+  var focused = unmade.find('.todo').filter(function() { return this === active; });
+  open.empty().append(unmade, rows(card, inOrder(tasks)));
+  focused.focus();
+  open.find('.todo').each(function() { // not indented if its parent isn't here
     if (this.parentTask && !document.getElementById(this.parentTask)) $(this).parent().removeClass('subtask');
   });
   ticked.each(function() {
     var todo = $(this).children('.todo');
     if (!document.getElementById(todo.attr('id')) && openParent(todo).length) placeSubtask(todo);
   });
-  $('#done').show();
+  card.find('.done').show();
   refreshRows();
 }
 
 // The open task that this one is a subtask of, if it is on screen.
 function openParent(todo) {
   var id = todo[0].parentTask;
-  return $('#claire .todo').not('.checked').filter(function() { return id && this.id === id; });
+  return todo[0].card.find('.claire .todo').not('.checked').filter(function() { return id && this.id === id; });
 }
 
 // Put a row among its parent's other subtasks.
@@ -341,11 +462,11 @@ function placeSubtask(todo) {
 
 // Ticked subtasks stay under their parent until it is done too. Returns the tasks
 // that don't belong under an open one.
-function placeTicked(tasks) {
+function placeTicked(card, tasks) {
   var rest = $.grep(tasks, function(task) {
     if (task.status !== 'completed' || document.getElementById(task.id) || isRemoved(task.id)) return false;
     if (!task.parent) return true;
-    var row = taskRow(task), todo = row.children('.todo');
+    var row = taskRow(task, card), todo = row.children('.todo');
     if (!openParent(todo).length) return true;
     placeSubtask(todo);
     return false;
@@ -355,10 +476,10 @@ function placeTicked(tasks) {
 }
 
 // Google can't be asked for these alone, so look at what has changed in a year.
-function loadTicked() {
-  if (!$('#claire li').length) return;
-  fetchAll('showCompleted=true&showHidden=true&updatedMin=' + encodeURIComponent(new Date(Date.now() - 365 * 864e5).toISOString()), function(tasks) {
-    if (tasksLoaded) placeTicked(tasks);
+function loadTicked(card) {
+  if (!card.find('.claire li').length) return;
+  fetchAll(card[0].list, 'showCompleted=true&showHidden=true&updatedMin=' + encodeURIComponent(new Date(Date.now() - 365 * 864e5).toISOString()), function(tasks) {
+    if ($.contains(document, card[0])) placeTicked(card, tasks);
   });
 }
 
@@ -378,27 +499,27 @@ function autosizeAll() {
 }
 
 // Show the list as Google now has it, unless that would lose something.
-function reload() {
-  if (!signedIn() || busy()) return;
-  fetchAll('showCompleted=false', function(tasks) {
-    if (busy()) return;
-    var active = $(document.activeElement);
-    var id = active.closest('#claire li').children('.todo').attr('id');
+function reload(card) {
+  if (!signedIn() || busy() || !card[0].loaded) return;
+  fetchAll(card[0].list, 'showCompleted=false', function(tasks) {
+    if (busy() || !$.contains(document, card[0])) return;
+    var active = $(document.activeElement), open = card.find('.claire');
+    var id = active.closest(open.children()).children('.todo').attr('id');
     var field = active.is('.notes') ? '.notes' : '.todo';
     var start = active[0] && active[0].selectionStart;
-    var open = $('#claire li.open .todo').map(function() { return this.id; }).get();
-    showTasks(tasks);
-    $('#claire .todo').each(function() {
+    var opened = open.find('li.open .todo').map(function() { return this.id; }).get();
+    showTasks(card, tasks);
+    open.find('.todo').each(function() {
       var row = $(this).parent();
-      if ($.inArray(this.id, open) >= 0) row.addClass('open');
+      if ($.inArray(this.id, opened) >= 0) row.addClass('open');
       if (id && this.id === id) row.find(field).setCursorPosition(start || 0);
     });
-    loadTicked();
+    loadTicked(card);
   });
 }
 
 function busy() {
-  return removals.length > 0 || moves.length > 0 || ticking > 0 || $('#claire .todo').filter(function() {
+  return removals.length > 0 || moves.length > 0 || ticking > 0 || $('.claire .todo').filter(function() {
     return !this.id || this.saving || isUnsaved($(this));
   }).length > 0;
 }
@@ -406,30 +527,31 @@ function busy() {
 // ---- Completed tasks, loaded only when asked for, newest first, ten at a time
 
 var doneDays = [30, 365, 0]; // how far back each request goes; 0 is everything
-var doneShown = 0;           // how many of those have been made
-var doneWaiting = [];        // loaded but not shown yet
+// On the card: doneShown is how many of those have been made, and doneWaiting is
+// what has been loaded but not shown yet.
 
-function toggleDone() {
-  var open = !$('#done').hasClass('open');
-  $('#done').toggleClass('open', open);
-  $('#done-toggle').attr('aria-expanded', String(open));
-  if (open && !doneShown) loadDone();
+function toggleDone(card) {
+  var open = !card.find('.done').hasClass('open');
+  card.find('.done').toggleClass('open', open);
+  card.find('.done-toggle').attr('aria-expanded', String(open));
+  if (open && !card[0].doneShown) loadDone(card);
   refreshRows();
   loadMoreIfNear();
 }
 
-function loadDone() {
-  if (doneWaiting.length >= 10 || doneShown === doneDays.length) return showDone();
-  var days = doneDays[doneShown];
-  $('#done-more').prop('disabled', true).text('Loading\u2026').show();
+function loadDone(card) {
+  var el = card[0], more = card.find('.done-more');
+  if (el.doneWaiting.length >= 10 || el.doneShown === doneDays.length) return showDone(card);
+  var days = doneDays[el.doneShown];
+  more.prop('disabled', true).text('Loading\u2026').show();
   // Not completedMin: subtasks completed along with their parent may have no date.
   var since = days ? '&updatedMin=' + encodeURIComponent(new Date(Date.now() - days * 864e5).toISOString()) : '';
-  fetchAll('showCompleted=true&showHidden=true' + since, function(tasks) {
-    doneShown++;
-    doneWaiting = inDoneOrder(placeTicked(tasks));
-    loadDone();
+  fetchAll(el.list, 'showCompleted=true&showHidden=true' + since, function(tasks) {
+    el.doneShown++;
+    el.doneWaiting = inDoneOrder(placeTicked(card, tasks));
+    loadDone(card);
   }, function(status) {
-    $('#done-more').prop('disabled', false).text('Try again').show();
+    more.prop('disabled', false).text('Try again').show();
     showFailure('Could not load completed tasks.', status);
   });
 }
@@ -458,42 +580,45 @@ function inDoneOrder(tasks) {
   });
 }
 
-function showDone() {
-  var next = doneWaiting.splice(0, 10);
-  while (next.length && doneWaiting.length && doneWaiting[0].parent && next.some(function(task) { return task.id === doneWaiting[0].parent; })) {
-    next.push(doneWaiting.shift()); // don't split a family
+function showDone(card) {
+  var el = card[0], waiting = el.doneWaiting, next = waiting.splice(0, 10);
+  while (next.length && waiting.length && waiting[0].parent && next.some(function(task) { return task.id === waiting[0].parent; })) {
+    next.push(waiting.shift()); // don't split a family
   }
-  $('#done-list').append($.map(next, function(task) {
-    return document.getElementById(task.id) ? null : taskRow(task);
-  }));
-  var more = doneWaiting.length > 0 || doneShown < doneDays.length;
-  $('#done-more').prop('disabled', false).text('Load more').toggle(more);
-  sortDone();
-  $('#done-none').toggle(!$('#done-list li').length);
+  card.find('.done-list').append(rows(card, $.grep(next, function(task) { return !document.getElementById(task.id); })));
+  var more = waiting.length > 0 || el.doneShown < doneDays.length;
+  card.find('.done-more').prop('disabled', false).text('Load more').toggle(more);
+  sortDone(card);
+  card.find('.done-none').toggle(!card.find('.done-list li').length);
   setTimeout(loadMoreIfNear, 0);
 }
 
-// Load more when the end of the list is near the bottom of the window.
+// Load more when the end of a list is near the bottom of the window.
 var autoDone = true;
 
 function loadMoreIfNear() {
-  var more = $('#done-more');
-  if (!autoDone || !$('#done').hasClass('open') || !doneShown || !more.is(':visible')) return;
-  if (more.prop('disabled') || more.text() === 'Try again') return;
-  if (more[0].getBoundingClientRect().top < window.innerHeight + 300) loadDone();
+  if (!autoDone) return;
+  $('#cards .card').each(function() {
+    var card = $(this), more = card.find('.done-more');
+    if (!card.find('.done').hasClass('open') || !this.doneShown || !more.is(':visible')) return;
+    if (more.prop('disabled') || more.text() === 'Try again') return;
+    if (more[0].getBoundingClientRect().top < window.innerHeight + 300) loadDone(card);
+  });
 }
 
 // The total is only known once everything has been loaded.
 function updateDoneCount() {
-  var all = doneShown === doneDays.length;
-  $('#done-toggle').text('Completed' + (all ? ' (' + ($('#done-list li').length + doneWaiting.length) + ')' : ''));
+  $('#cards .card').each(function() {
+    var all = this.doneShown === doneDays.length;
+    $(this).find('.done-toggle').text('Completed' + (all ? ' (' + ($(this).find('.done-list li').length + this.doneWaiting.length) + ')' : ''));
+  });
 }
 
-function sortDone() {
-  var rows = $('#done-list li'), ids = {}, top = [];
+function sortDone(card) {
+  var list = card.find('.done-list'), all = list.children(), ids = {}, top = [];
   function el(row) { return $(row).children('.todo')[0]; }
-  rows.each(function() { ids[el(this).id] = true; });
-  rows.each(function() {
+  all.each(function() { ids[el(this).id] = true; });
+  all.each(function() {
     var child = !!(el(this).parentTask && ids[el(this).parentTask]);
     $(this).toggleClass('subtask', child);
     if (!child) top.push(this);
@@ -504,9 +629,9 @@ function sortDone() {
   });
   $.each(top, function(i, row) {
     var id = el(row).id;
-    $('#done-list').append(row, id ? rows.filter('.subtask').filter(function() { return el(this).parentTask === id; }) : null);
+    list.append(row, id ? all.filter('.subtask').filter(function() { return el(this).parentTask === id; }) : null);
   });
-  if (rows.length) $('#done-none').hide();
+  if (all.length) card.find('.done-none').hide();
   refreshRows();
 }
 
@@ -519,24 +644,25 @@ function setCompleted(checkbox, after, quiet, failed) {
   var row = todo.parent();
   var done = checkbox.prop('checked');
   var id = todo.attr('id');
-  if (!done && id && todo[0].parentTask && row.parent().is('#done-list')) return reopenParent(checkbox, after, quiet);
+  var card = todo[0].card;
+  if (!done && id && todo[0].parentTask && row.parent().is('.done-list')) return reopenParent(checkbox, after, quiet);
   todo.toggleClass('checked', done);
   if (!id) return; // saveTask sends it once the task exists
   ticking++;
-  api('PATCH', '/' + id, done ? { status: 'completed' } : { status: 'needsAction', completed: null }, function(result) {
+  api(todo, 'PATCH', '/' + id, done ? { status: 'completed' } : { status: 'needsAction', completed: null }, function(result) {
     ticking--;
     if (checkbox.prop('checked') !== done) return; // changed again since
     todo[0].completedAt = done ? (result && result.completed) || new Date().toISOString() : undefined;
     if (todo[0].deleted) return;
-    var here = row.parent().is('#claire');
+    var here = row.parent().is('.claire');
     if (here && (!done || openParent(todo).length)) {
       refreshRows();
       if (done) offerUntick(checkbox, [], quiet);
     } else if (done) {
       var subtasks = subtaskRows(todo).children('.todo');
       row.removeClass('selected');
-      $('#done-list').prepend(row, subtasks.filter('.checked').parent().removeClass('selected'));
-      sortDone();
+      card.find('.done-list').prepend(row, subtasks.filter('.checked').parent().removeClass('selected'));
+      sortDone(card);
       var open = subtasks.not('.checked').get();
       if (open.length) followSubtasks(checkbox, open, quiet);
       else offerUntick(checkbox, [], quiet);
@@ -544,13 +670,13 @@ function setCompleted(checkbox, after, quiet, failed) {
       var along = subtaskRows(todo);
       row.removeClass('selected');
       if (openParent(todo).length) placeSubtask(todo);
-      else $('#claire').prepend(row.removeClass('subtask'), along.addClass('subtask'));
-      sortDone();
+      else card.find('.claire').prepend(row.removeClass('subtask'), along.addClass('subtask'));
+      sortDone(card);
     }
     renderMeta(row);
     if (!done && !quiet) canUndo(function() { return live(todo).length && !live(todo).hasClass('checked'); }, function() { undoTick([todo], true); });
     if (after) after();
-    if (!here && !done) reload(); // puts it back in its place, unless more are on the way
+    if (!here && !done) reload(card); // puts it back in its place, unless more are on the way
   }, function(status) {
     ticking--;
     checkbox.prop('checked', !done);
@@ -564,8 +690,8 @@ function setCompleted(checkbox, after, quiet, failed) {
 // it, still ticked. The parent goes first: Google shouldn't see an open subtask
 // under a completed task.
 function reopenParent(checkbox, after, quiet) {
-  var todo = checkbox.siblings('.todo'), id = todo[0].parentTask;
-  var parent = $('#done-list .todo').filter(function() { return this.id === id; });
+  var todo = checkbox.siblings('.todo'), id = todo[0].parentTask, card = todo[0].card;
+  var parent = card.find('.done-list .todo').filter(function() { return this.id === id; });
   function undo() { // the subtask first, then its parent
     var sub = live(todo).siblings('input[type=checkbox]'), top = live(parent).siblings('input[type=checkbox]');
     setCompleted(sub.prop('checked', true), function() {
@@ -576,12 +702,12 @@ function reopenParent(checkbox, after, quiet) {
     untick(function() {
       if (!quiet) canUndo(function() { return live(todo).length && !live(todo).hasClass('checked'); }, undo);
       if (after) after();
-      reload();
+      reload(card);
     });
   }
   function untick(then) {
     var was = todo[0].parentTask, list = todo.closest('ul');
-    if (list.is('#done-list')) todo[0].parentTask = undefined; // its parent isn't on screen
+    if (list.is('.done-list')) todo[0].parentTask = undefined; // its parent isn't on screen
     setCompleted(checkbox, then, true);
     todo[0].parentTask = was;
   }
@@ -589,10 +715,10 @@ function reopenParent(checkbox, after, quiet) {
     checkbox.prop('checked', true);
   }
   if (parent.length) return setCompleted(parent.siblings('input[type=checkbox]').prop('checked', false), subtask, true, back);
-  api('GET', '/' + id, null, function(task) {
+  api(todo, 'GET', '/' + id, null, function(task) {
     if (!task || task.status !== 'completed') return subtask();
-    api('PATCH', '/' + id, { status: 'needsAction', completed: null }, function() {
-      doneWaiting = $.grep(doneWaiting, function(waiting) { return waiting.id !== id; });
+    api(todo, 'PATCH', '/' + id, { status: 'needsAction', completed: null }, function() {
+      card[0].doneWaiting = $.grep(card[0].doneWaiting, function(waiting) { return waiting.id !== id; });
       subtask();
     }, function(status) {
       back();
@@ -616,24 +742,24 @@ function offerUntick(checkbox, subtasks, quiet) {
 
 // Google decides whether completing a task completes its subtasks, so ask it.
 function followSubtasks(checkbox, subtasks, quiet) {
-  var left = subtasks.length, moved = [];
+  var left = subtasks.length, moved = [], card = subtasks[0].card;
   function next() {
     if (--left) return;
-    if (moved.length) sortDone();
+    if (moved.length) sortDone(card);
     offerUntick(checkbox, moved, quiet);
-    reload();
+    reload(card);
   }
   $.each(subtasks, function(i, el) {
     var todo = $(el), row = todo.parent();
     if (!el.id) return next();
-    api('GET', '/' + el.id, null, function(task) {
-      var open = row.parent().is('#claire') && !el.deleted;
+    api(todo, 'GET', '/' + el.id, null, function(task) {
+      var open = row.parent().is('.claire') && !el.deleted;
       if (open && task && task.status === 'completed') {
         saveTask(todo);
         el.completedAt = doneDate(task);
         todo.addClass('checked');
         moved.push(todo.siblings('input[type=checkbox]').prop('checked', true)[0]);
-        $('#done-list').append(row.removeClass('selected'));
+        card.find('.done-list').append(row.removeClass('selected'));
         renderMeta(row);
       }
       next();
@@ -648,7 +774,7 @@ function text(value) {
 }
 
 // Values are set with .val() and .text(), so quotes and HTML stay as text.
-function taskRow(task) {
+function taskRow(task, card) {
   var done = task.status === 'completed';
   var todo = $('<textarea class="todo" rows="1" aria-label="Task"></textarea>').toggleClass('checked', done)
     .val(text(task.title));
@@ -669,6 +795,7 @@ function taskRow(task) {
     }))
   );
   if (task.id) todo.attr('id', task.id);
+  todo[0].card = card;
   todo[0].parentTask = task.parent;
   todo[0].position = task.position;
   todo[0].completedAt = done ? doneDate(task) : undefined;
@@ -721,8 +848,8 @@ function subtaskRows(todo) {
 // A completed task whose subtasks are still open: deleting it could take them too.
 function hasOpenSubtasks(todo) {
   var id = todo.attr('id');
-  if (!todo.closest('#done-list').length) return false;
-  if (!$('#claire .todo').filter(function() { return id && this.parentTask === id; }).length) return false;
+  if (!todo.closest('.done-list').length) return false;
+  if (!todo[0].card.find('.claire .todo').filter(function() { return id && this.parentTask === id; }).length) return false;
   showMessage('That task still has open subtasks, so it can\u2019t be removed.', null, null, 4000);
   return true;
 }
@@ -791,7 +918,7 @@ function saveTask(todo) {
   if (!id && mustWait(todo)) return saveSoon(todo);
   var sent = current(todo);
   el.saving = true;
-  api(id ? 'PATCH' : 'POST', id ? '/' + id : placement(todo), changes(todo), function(result) {
+  api(todo, id ? 'PATCH' : 'POST', id ? '/' + id : placement(todo), changes(todo), function(result) {
     el.saving = el.failed = false;
     el.saved = sent;
     if (!id) {
@@ -867,7 +994,7 @@ function undoTick(todos, done) {
   setCompleted($(boxes[0]), function() { // then its subtasks, which come back with it
     $.each(boxes.slice(1), function(i, box) {
       $(box).prop('checked', done);
-      setCompleted($(box), reload, true);
+      setCompleted($(box), function() { reload($(box).siblings('.todo')[0].card); }, true);
     });
   }, true);
 }
@@ -918,7 +1045,7 @@ function putBack(r, todos) {
   if (r.next.length && $.contains(document, r.next[0])) r.next.before(todos.parent());
   else if (r.prev.length && $.contains(document, r.prev[0])) r.prev.after(todos.parent());
   else r.list.append(todos.parent());
-  if (r.list.is('#done-list')) sortDone();
+  if (r.list.is('.done-list')) sortDone(r.todos[0].card);
   else refreshRows();
 }
 
@@ -938,7 +1065,7 @@ function finishRemoval(r) {
 function deleteTask(todo, removal) {
   var id = todo.attr('id');
   if (!id) return; // never saved, or saveTask deletes it once it has an id
-  api('DELETE', '/' + id, null, null, function(status) {
+  api(todo, 'DELETE', '/' + id, null, null, function(status) {
     if (status === 404) return; // already deleted
     if (removal) putBack(removal, todo);
     showFailure('Could not delete that task.', status);
@@ -1011,10 +1138,10 @@ function nextMove() {
     nextMove();
   }
   if (!id || todo[0].deleted) return done(); // a new task is created in its place
-  api('POST', '/' + id + '/move' + placement(todo), null, done, function(status) {
+  api(todo, 'POST', '/' + id + '/move' + placement(todo), null, done, function(status) {
     moves = [];
     showFailure('Could not move that task.', status);
-    reload(); // back to how Google has it
+    reload(todo[0].card); // back to how Google has it
   });
 }
 
@@ -1024,16 +1151,16 @@ function place(todo, before, parent) {
   var was = { above: todo.parent().prev()[0], parent: todo[0].parentTask };
   var above = todo.parent().prev().children('.todo'), below = rows.last().next().children('.todo');
   if (before && before.length) before.before(rows);
-  else $('#claire').append(rows);
+  else todo[0].card.find('.claire').append(rows);
   todo[0].parentTask = parent;
   todo.parent().toggleClass('subtask', !!parent);
   refreshRows();
   if (was.above === todo.parent().prev()[0] && was.parent === parent) return;
   moveTask(todo);
-  canUndo(function() { return live(todo).closest('#claire').length; }, function() {
-    var back = live(above).closest('#claire li'), next = live(below).closest('#claire li');
+  canUndo(function() { return live(todo).closest('.claire').length; }, function() {
+    var back = live(above).closest('.claire li'), next = live(below).closest('.claire li');
     var row = live(todo);
-    place(row, next.length ? next : back.length ? back.nextAll('li').not(row.parent().add(subtaskRows(row))).first() : above.length ? $() : $('#claire li').first(), was.parent);
+    place(row, next.length ? next : back.length ? back.nextAll('li').not(row.parent().add(subtaskRows(row))).first() : above.length ? $() : row[0].card.find('.claire li').first(), was.parent);
     row.focus();
   });
 }
@@ -1050,13 +1177,14 @@ function moveOutTicked(todo) {
   if (!parent || !el.id) return false;
   el.parentTask = undefined;
   row.removeClass('selected');
-  $('#done-list').append(row);
-  sortDone();
+  var card = el.card;
+  card.find('.done-list').append(row);
+  sortDone(card);
   showMessage('Moved to Completed.', null, null, 4000);
-  api('POST', '/' + el.id + '/move', null, null, function(status) {
+  api(todo, 'POST', '/' + el.id + '/move', null, null, function(status) {
     el.parentTask = parent;
-    if (list.is('#claire') && openParent(todo).length) placeSubtask(todo);
-    sortDone();
+    if (list.is('.claire') && openParent(todo).length) placeSubtask(todo);
+    sortDone(card);
     showFailure('Could not move that task.', status);
   });
   return true;
@@ -1065,7 +1193,7 @@ function moveOutTicked(todo) {
 function moveRow(todo, how) {
   var row = todo.parent();
   if (how === 'outdent' && todo.hasClass('checked') && row.hasClass('subtask')) return moveOutTicked(todo);
-  if (!row.parent().is('#claire') || todo.hasClass('checked')) return;
+  if (!row.parent().is('.claire') || todo.hasClass('checked')) return;
   var sub = row.hasClass('subtask');
   var caret = document.activeElement === todo[0] ? todo[0].selectionStart : null;
   var other, above, moved = false;
@@ -1102,23 +1230,67 @@ function addSubtask(todo) {
   var id = todo.attr('id');
   if (todo.parent().hasClass('subtask')) return; // Google only has one level
   if (!id) return showMessage(todo.val() ? 'Still saving that task. Try again in a moment.' : 'Give that task a title first.', null, null, 4000);
-  var row = taskRow({ parent: id });
+  var row = taskRow({ parent: id }, todo[0].card);
   family(todo.parent()).last().after(row);
   refreshRows();
   row.children('.todo').focus();
+}
+
+// Move a task to another list, under the given task there or at the top.
+function moveToList(todo, id, previous) {
+  var from = todo[0].card, to = cardFor(id), task = todo.attr('id'), row = todo.parent();
+  if (id === from[0].list) return;
+  if (subtaskRows(todo).length) return showMessage('That task has subtasks, so it can\u2019t change list.', null, null, 4000);
+  if (!task) return showMessage(todo.val() ? 'Still saving that task. Try again in a moment.' : 'Give that task a title first.', null, null, 4000);
+  function call(source, what, target, after, done, failed) {
+    send('POST', 'lists/' + encodeURIComponent(source) + '/tasks/' + encodeURIComponent(what) + '/move?destinationTasklist=' + encodeURIComponent(target) +
+      (after ? '&previous=' + encodeURIComponent(after) : ''), null, done, failed);
+  }
+  settle('Move anyway', function() {
+    var next = row.next();
+    var was = siblingAbove(todo, function(el) { return el.id && !$(el).hasClass('checked'); });
+    todo[0].deleted = true; // it is on its way
+    row.removeClass('selected').detach();
+    refreshRows();
+    call(from[0].list, task, id, previous, function(result) {
+      todo[0].gone = true;
+      var name = (findList(id) || {}).title, moved = (result && result.id) || task;
+      var list = findList(id);
+      if (list && !to.length && typeof list.count === 'number') list.count++;
+      if (list) showCount(list);
+      if (to.length) reload(to);
+      var used = false;
+      function back() {
+        used = true;
+        call(id, moved, from[0].list, was && was.id, function() {
+          if (list && !to.length && typeof list.count === 'number') { list.count--; showCount(list); }
+          if (to.length) reload(to);
+          reload(from);
+        }, function(status) { showFailure('Could not move it back.', status); });
+      }
+      canUndo(function() { return !used; }, back);
+      showMessage('Moved to ' + name + '.', 'Undo', back, 7000);
+    }, function(status) {
+      todo[0].deleted = false;
+      if (next.length && $.contains(document, next[0])) next.before(row);
+      else from.find('.claire').append(row);
+      refreshRows();
+      showFailure('Could not move that task.', status);
+    });
+  });
 }
 
 // Last chance as the page closes: requests that outlive it.
 function flush() {
   if (!signedIn()) return;
   var headers = { 'Authorization': 'Bearer ' + auth.token(), 'Content-Type': 'application/json' };
-  var url = API + 'lists/' + encodeURIComponent(listId) + '/tasks';
+  function url(el) { return API + 'lists/' + encodeURIComponent(el.card[0].list) + '/tasks'; }
   $('.todo').each(function() {
     var el = this, todo = $(el), id = todo.attr('id'), sent = current(todo);
     if (!isUnsaved(todo) || (el.saving && !id)) return;
     clearTimeout(el.timer);
     el.saving = true;
-    fetch(url + (id ? '/' + id : placement(todo)), { method: id ? 'PATCH' : 'POST', headers: headers, keepalive: true, body: JSON.stringify(changes(todo)) })
+    fetch(url(el) + (id ? '/' + id : placement(todo)), { method: id ? 'PATCH' : 'POST', headers: headers, keepalive: true, body: JSON.stringify(changes(todo)) })
       .then(function(r) { if (!r.ok) throw r; return r.json(); })
       .then(function(task) { todo.attr('id', task.id); el.saved = sent; })
       .catch(function() {})
@@ -1126,14 +1298,14 @@ function flush() {
   });
   $.each(moves.slice(1), function(i, todo) { // the first is already on its way
     var id = todo.attr('id');
-    if (id && !todo[0].deleted) fetch(url + '/' + id + '/move' + placement(todo), { method: 'POST', headers: headers, keepalive: true }).catch(function() {});
+    if (id && !todo[0].deleted) fetch(url(todo[0]) + '/' + id + '/move' + placement(todo), { method: 'POST', headers: headers, keepalive: true }).catch(function() {});
   });
   moves.length = Math.min(moves.length, 1);
   $.each(removals.splice(0), function(i, r) {
     clearTimeout(r.timer);
     $(r.todos.get().reverse()).each(function() {
       this.gone = true;
-      if (this.id) fetch(url + '/' + this.id, { method: 'DELETE', headers: headers, keepalive: true }).catch(function() {});
+      if (this.id) fetch(url(this) + '/' + this.id, { method: 'DELETE', headers: headers, keepalive: true }).catch(function() {});
     });
   });
   if (undoShown) hideMessage();
@@ -1141,10 +1313,12 @@ function flush() {
 
 $(window).on('pagehide', flush);
 
-function newTask() {
+function newTask(card) {
   if (!signedIn()) return handleAuthClick();
-  var row = taskRow({});
-  $('#claire').prepend(row);
+  if (!card || !card.length) card = $('#cards .card').first();
+  if (!card.length) return showMessage('Show a list first.', null, null, 4000);
+  var row = taskRow({}, card);
+  card.find('.claire').prepend(row);
   refreshRows();
   row.children('.todo').focus();
 }
