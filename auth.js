@@ -36,34 +36,67 @@ function extensionAuth() {
   };
 }
 
+// Google's token lasts about an hour. It is kept in this tab's session storage so
+// that a refresh doesn't log you out; closing the tab forgets it.
 function webAuth() {
+  var KEY = 'tabandtick-token';
   var waiting = [];
   var ready = false;
+  var saved = null; // {token, until}
 
-  window.googleReady = function() {
+  try {
+    saved = JSON.parse(sessionStorage.getItem(KEY));
+  } catch (e) { /* storage is blocked, or not ours */ }
+
+  function keep(value) {
+    saved = value;
+    try {
+      if (value) sessionStorage.setItem(KEY, JSON.stringify(value));
+      else sessionStorage.removeItem(KEY);
+    } catch (e) { /* storage is blocked */ }
+  }
+
+  function token() {
+    return saved && saved.token && saved.until > Date.now() ? saved.token : null;
+  }
+
+  var script = document.createElement('script');
+  script.src = 'https://accounts.google.com/gsi/client';
+  script.onload = function() {
     ready = true;
     $.each(waiting.splice(0), function(i, f) { f(); });
   };
-  var script = document.createElement('script');
-  script.src = 'https://apis.google.com/js/client.js?onload=googleReady';
+  script.onerror = function() {
+    waiting.failed = true;
+    $.each(waiting.splice(0), function(i, f) { f('blocked'); });
+  };
   document.head.appendChild(script);
 
-  function authorize(options, done) {
-    if (!ready) return waiting.push(function() { authorize(options, done); });
-    gapi.auth.authorize($.extend({ client_id: CLIENT_ID, scope: SCOPE }, options), function(result) {
-      done(!!(result && !result.error), result && (result.error_subtype || result.error));
-    });
+  function login(done, choose, blocked) {
+    if (blocked || waiting.failed) return done(false, 'Google\u2019s sign-in script was blocked');
+    if (!ready) return waiting.push(function(blocked) { login(done, choose, blocked); });
+    google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: SCOPE,
+      callback: function(response) {
+        if (response.error) return done(false, response.error);
+        if (!google.accounts.oauth2.hasGrantedAllScopes(response, SCOPE)) return done(false, 'access to tasks wasn\u2019t ticked');
+        keep({ token: response.access_token, until: Date.now() + (response.expires_in - 60) * 1000 });
+        done(true);
+      },
+      error_callback: function(error) { done(false, error && error.type); }
+    }).requestAccessToken({ prompt: choose ? 'select_account' : '' });
   }
 
   return {
-    silent: function(done) { authorize({ immediate: true }, done); },
-    login: function(done, choose) { authorize(choose ? { immediate: false, prompt: 'select_account' } : { immediate: false }, done); },
-    expired: function(done) { authorize({ immediate: true }, done); },
-    token: function() {
-      var token = ready && gapi.auth.getToken();
-      return (token && token.access_token) || null;
+    silent: function(done) { done(!!token(), 'no token'); },
+    login: function(done, choose) { login(done, choose); },
+    expired: function(done) { // a new token needs a click
+      keep(null);
+      done(false, 'expired');
     },
-    logout: function() { if (ready) gapi.auth.setToken(null); }
+    token: token,
+    logout: function() { keep(null); }
   };
 }
 

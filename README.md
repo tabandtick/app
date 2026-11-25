@@ -27,7 +27,8 @@ to delete anything once that time is up, or when the page closes.
 - Stars, repeats, deadlines, times of day, attachments and reminders aren't in
   Google's API. Tasks assigned from Docs or Chat aren't shown.
 - Lists can't be deleted, and tasks can't be moved between lists.
-- The website uses Google's deprecated sign-in library. The extension doesn't.
+- The website asks you to log in about once an hour, and in each new browser tab.
+  The extension doesn't.
 
 ## Files
 
