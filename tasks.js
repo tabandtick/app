@@ -919,8 +919,28 @@ function family(row) {
   return row.add(row.nextUntil('li:not(.subtask)'));
 }
 
+// Google only lets a completed task move to the top level, with no place in it, so
+// moving one out of its family puts it among the completed tasks.
+function moveOutTicked(todo) {
+  var row = todo.parent(), el = todo[0], parent = el.parentTask, list = row.parent();
+  if (!parent || !el.id) return false;
+  el.parentTask = undefined;
+  row.removeClass('selected');
+  $('#done-list').append(row);
+  sortDone();
+  showMessage('Moved to Completed.', null, null, 4000);
+  api('POST', '/' + el.id + '/move', null, null, function(status) {
+    el.parentTask = parent;
+    if (list.is('#claire') && openParent(todo).length) placeSubtask(todo);
+    sortDone();
+    showFailure('Could not move that task.', status);
+  });
+  return true;
+}
+
 function moveRow(todo, how) {
   var row = todo.parent();
+  if (how === 'outdent' && todo.hasClass('checked') && row.hasClass('subtask')) return moveOutTicked(todo);
   if (!row.parent().is('#claire') || todo.hasClass('checked')) return;
   var sub = row.hasClass('subtask');
   var caret = document.activeElement === todo[0] ? todo[0].selectionStart : null;
