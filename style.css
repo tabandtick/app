@@ -251,15 +251,6 @@ main {
   border-color: var(--line);
 }
 
-#total {
-  color: var(--muted);
-}
-
-#delete-task-button {
-  padding: 6px 10px;
-  color: var(--muted);
-}
-
 #new-task-button {
   display: block;
   margin: 0 16px 6px;

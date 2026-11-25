@@ -12,7 +12,7 @@ server or build step. Not made or endorsed by Google.
   task until that is completed too.
 - **The dots on the right** of a row open its menu: notes and due date, subtasks,
   moving and deleting.
-- **Delete** deletes the task you last clicked, and any subtasks, and moves on.
+- **Delete** in the menu deletes a task and any subtasks, and moves on to the next.
 - **Enter** splits a row in two. **Backspace** at the start joins it to the row
   above, and **Delete** at the end joins the next one to it.
 - **Drag the handle** to move a task: right to make it a subtask, left to move out.

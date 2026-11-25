@@ -18,7 +18,6 @@ $.fn.setCursorPosition = function(start, end) {
 
 function updateToDoCount() {
 	var count = $('#claire .todo').not('.checked').filter(function() { return this.value.length > 0; }).length;
-	$('#total').text(tasksLoaded ? count : '');
 	$('#empty').toggle(tasksLoaded && !$('#claire li').length);
 	var list = currentList();
 	if (list && tasksLoaded) {
@@ -50,14 +49,6 @@ function deleteAndMoveOn(todo) {
 	// Ready to delete the next one. Caret at the end, so Backspace edits its text.
 	if (following.length) following.setCursorPosition(following.val().length);
 }
-
-$('#delete-task-button').click(function() {
-	if (!selected.length || !$.contains(document, selected[0])) {
-		showMessage('Click a task first, then Delete Task.', null, null, 4000);
-		return;
-	}
-	deleteAndMoveOn(selected);
-});
 
 // Split a row in two. The new one goes below any subtasks, as it does in Google.
 function splitRow(todo) {
