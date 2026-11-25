@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Make the Chrome Web Store package.
 
-    python3 tools/build-store.py OUT.zip [CLIENT_ID]
+    python3 tools/build-store.py OUT.zip
 
 It differs from this folder in two ways. The website's sign-in is left out, as the
 store doesn't allow code from other sites. The manifest has no key, as the store
-gives the extension its own ID; CLIENT_ID is the OAuth client made for that ID.
+gives the extension its own ID, and CLIENT_ID is the OAuth client made for that ID.
 """
 import json, re, sys, zipfile
 from pathlib import Path
+
+# for amidicalcieolbecimlogomhnokopigp, its ID in the store
+CLIENT_ID = '719894949389-d5vjqvhj7iv0du78j9ml0cf8s783niso.apps.googleusercontent.com'
 
 ROOT = Path(__file__).resolve().parent.parent
 FILES = ['index.html', 'style.css', 'jquery.js', 'script.js', 'tasks.js',
@@ -31,8 +34,7 @@ def main():
     out = Path(sys.argv[1])
     manifest = json.loads((ROOT / 'manifest.json').read_text())
     del manifest['key']
-    if len(sys.argv) > 2:
-        manifest['oauth2']['client_id'] = sys.argv[2]
+    manifest['oauth2']['client_id'] = CLIENT_ID
     with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
         z.writestr('manifest.json', json.dumps(manifest, indent=2, ensure_ascii=False) + '\n')
         z.writestr('auth.js', extension_auth())
