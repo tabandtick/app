@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Tab & Tick",
+  "version": "1.0.0",
+  "description": "A fast to-do list in your new tab. Works with Google Tasks.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApDdZF2Ei6499TzdGeOmAtJEt2oRVMi0YldzYguCd2UWfqROxmKCW/cXutLV6fVaKU48u/9zRhhwnWQw54LOOPGWsvv+nvRIHMjkUZw3ZKSAHEJCBRCG0sDzzmj/+t6XRXPENBtFN3OgOqLARuyYfUE3/QSAdKWwddIFHnOvi3UjahWV9U+iLkYD2VmH7dO51ONQ9weF3ZfJIzVB8HTBXzycO3d9OjBDW36IS+AROH/HhfxeC/LwgE2ybvOSQScYhGVBSjPB6w4xPOy6PoArJcAnc4Jzw5b3P+JxqCGTovSbuBAzNuPgz9nUN73fhpFFH9ELlOT4KzPwbmCKsC7ApcwIDAQAB",
+  "minimum_chrome_version": "105",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "chrome_url_overrides": {
+    "newtab": "index.html"
+  },
+  "permissions": [
+    "identity"
+  ],
+  "host_permissions": [
+    "https://tasks.googleapis.com/*"
+  ],
+  "oauth2": {
+    "client_id": "REPLACE_WITH_CHROME_EXTENSION_CLIENT_ID",
+    "scopes": [
+      "https://www.googleapis.com/auth/tasks"
+    ]
+  }
+}

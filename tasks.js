@@ -1,26 +1,24 @@
-var CLIENT_ID = '146982777170-h1btpb05ltctf58n4f9foqof665i08j7.apps.googleusercontent.com';
-var SCOPES = ['https://www.googleapis.com/auth/tasks'];
-// The signed-in user's own default list.
-var TASK_LIST = '@default';
+var API = 'https://tasks.googleapis.com/tasks/v1/';
 var tasksLoaded = false;
+var session = 0; // goes up on log out or changing list, so late answers are ignored
 
 function checkAuth() {
   if (loggedOut()) return showLogIn();
-  gapi.auth.authorize(
-    {
-      'client_id': CLIENT_ID,
-      'scope': SCOPES.join(' '),
-      'immediate': true
-    }, handleAuthResult);
+  auth.silent(handleAuthResult);
 }
 
-function handleAuthResult(authResult) {
-  if (authResult && !authResult.error) {
-    showStatus('Loading\u2026');
-    listTasks();
-  } else {
-    showLogIn();
-  }
+function handleAuthResult(ok) {
+  if (!ok) return showLogIn();
+  if (tasksLoaded) return saveAll(); // logged in again: save what couldn't be saved
+  showStatus('Loading\u2026');
+  listTasks();
+}
+
+function handleAuthClick() {
+  auth.login(function(ok) {
+    if (ok) loggedOut(false);
+    handleAuthResult(ok);
+  }, loggedOut());
 }
 
 // Whether you chose to log out, so a refresh doesn't log you straight back in.
@@ -29,47 +27,13 @@ var loggedOutHere = false;
 
 function loggedOut(value) {
   try {
-    if (value === true) localStorage.setItem('mytodo-logged-out', '1');
-    if (value === false) localStorage.removeItem('mytodo-logged-out');
-    return localStorage.getItem('mytodo-logged-out') === '1';
+    if (value === true) localStorage.setItem('tabandtick-logged-out', '1');
+    if (value === false) localStorage.removeItem('tabandtick-logged-out');
+    return localStorage.getItem('tabandtick-logged-out') === '1';
   } catch (e) { // storage is blocked
     if (value !== undefined) loggedOutHere = value;
     return loggedOutHere;
   }
-}
-
-var session = 0; // goes up on log out, so late answers are ignored
-
-function logOut() {
-  saveAll();
-  var tries = 0;
-  (function wait() {
-    if (!anyUnsaved()) return endSession();
-    if (tries++ < 20) return setTimeout(wait, 250);
-    showMessage('Some changes couldn\u2019t be saved.', 'Log out anyway', endSession);
-  })();
-}
-
-function anyUnsaved() {
-  return moves.length > 0 || $('.todo').filter(function() { return this.saving || isUnsaved($(this)); }).length > 0;
-}
-
-function endSession() {
-  flush(); // finishes any deletes
-  session++;
-  loggedOut(true);
-  gapi.auth.setToken(null);
-  moves = [];
-  tasksLoaded = false;
-  doneShown = 0;
-  selected = $();
-  hideMessage();
-  $('#claire, #done-list').empty();
-  $('#done').removeClass('open').hide();
-  $('#done-toggle').attr('aria-expanded', 'false');
-  $('#log-out-button').hide();
-  refreshRows();
-  showLogIn();
 }
 
 // Shows a message in place of the Log In button; '' shows neither.
@@ -90,34 +54,7 @@ setTimeout(function() {
 }, 6000);
 
 function signedIn() {
-  return !!(window.gapi && gapi.auth && gapi.auth.getToken && gapi.auth.getToken());
-}
-
-function handleAuthClick(event) {
-  var request = {client_id: CLIENT_ID, scope: SCOPES, immediate: false};
-  if (loggedOut()) request.prompt = 'select_account';
-  gapi.auth.authorize(request, function(authResult) {
-    if (authResult && !authResult.error) loggedOut(false);
-    handleAuthResult(authResult);
-  });
-  return false;
-}
-
-// Calls the Tasks API on the list. done(result) on success, failed(status) if not.
-function api(method, path, body, done, failed) {
-  var request = {
-    path: 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks' + path,
-    method: method
-  };
-  if (body) request.body = body;
-  var started = session;
-  gapi.client.request(request).then(function(resp) {
-    if (done && started === session) done(resp.result);
-  }, function(err) {
-    if (started !== session) return;
-    console.error(method + ' failed', err);
-    if (failed) failed(err && err.status);
-  });
+  return !!auth.token();
 }
 
 var messageTimer;
@@ -141,28 +78,208 @@ function hideMessage() {
   $('#message').hide();
 }
 
+// Calls Google. done(result) on success, failed(status) if not; status is undefined
+// when Google couldn't be reached. A refused token is replaced and tried once more.
+function send(method, path, body, done, failed, again) {
+  var started = session;
+  var options = { method: method, headers: { 'Authorization': 'Bearer ' + auth.token() } };
+  if (body) {
+    options.headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify(body);
+  }
+  fetch(API + path, options).then(function(response) {
+    return response.text().then(function(text) {
+      return { ok: response.ok, status: response.status, result: response.ok && text ? JSON.parse(text) : null };
+    });
+  }).catch(function(error) {
+    return { ok: false, error: error };
+  }).then(function(answer) {
+    if (started !== session) return;
+    if (answer.ok) {
+      if (done) done(answer.result);
+      return;
+    }
+    if (answer.status === 401 && !again) {
+      auth.expired(function(ok) {
+        if (started !== session) return;
+        if (ok) send(method, path, body, done, failed, true);
+        else if (failed) failed(401);
+      });
+      return;
+    }
+    console.error(method + ' failed', answer.status || answer.error);
+    if (failed) failed(answer.status);
+  });
+}
+
+// Calls Google about a task in the list on screen.
+function api(method, path, body, done, failed) {
+  send(method, 'lists/' + encodeURIComponent(listId) + '/tasks' + path, body, done, failed);
+}
+
 // Google's access runs out after about an hour, which shows up as a 401.
 function showFailure(text, status, retry) {
   if (status === 401) showMessage(text + ' Please log in again.', 'Log in', handleAuthClick);
   else showMessage(text, retry && 'Retry', retry, retry ? 0 : 6000);
 }
 
+// ---- Lists
+
+var listId = remembered() || '@default'; // the list on screen
+var lists = [];
+
+function remembered(id) {
+  try {
+    if (id !== undefined) localStorage.setItem('tabandtick-list', id);
+    return localStorage.getItem('tabandtick-list');
+  } catch (e) { // storage is blocked
+    return null;
+  }
+}
+
 function listTasks() {
-  if (tasksLoaded) return saveAll(); // logged in again: save what couldn't be saved
   fetchAll('showCompleted=false', function(tasks) {
     if (tasksLoaded) return; // a late silent sign-in must not list them twice
     tasksLoaded = true;
     showStatus('');
-    $('#log-out-button').show();
+    $('body').addClass('signed-in');
     showTasks(tasks);
-  }, showLogIn);
+    loadLists();
+  }, function(status) {
+    if (status === 404 && listId !== '@default') { // that list has been deleted
+      listId = '@default';
+      remembered('@default');
+      return listTasks();
+    }
+    showLogIn();
+  });
 }
 
+function loadLists() {
+  send('GET', 'users/@me/lists?maxResults=100', null, function(result) {
+    lists = (result && result.items) || [];
+    if (listId !== '@default') return showLists();
+    send('GET', 'users/@me/lists/@default', null, function(list) {
+      if (listId === '@default') listId = list.id; // same list, by its own name
+      showLists();
+    });
+  });
+}
+
+function currentList() {
+  return $.grep(lists, function(list) { return list.id === listId; })[0];
+}
+
+function showLists() {
+  $('#lists').empty().append($.map(lists, function(list) {
+    return $('<li></li>').append($('<button type="button"></button>')
+      .attr({ 'data-list': list.id, 'aria-current': list.id === listId ? 'true' : null })
+      .append($('<span class="name"></span>').text(list.title), $('<span class="count"></span>').text(list.count === undefined ? '' : list.count)));
+  }));
+  var list = currentList();
+  if (list && !$('#list-title').is(':focus')) $('#list-title').val(list.title);
+  updateToDoCount();
+  $.each(lists.slice(0, 15), function(i, other) {
+    if (other.id === listId || other.count !== undefined) return;
+    fetchAll('showCompleted=false', function(tasks) {
+      other.count = tasks.length;
+      $('#lists [data-list]').filter(function() { return $(this).attr('data-list') === other.id; }).find('.count').text(other.count);
+    }, null, null, null, other.id);
+  });
+}
+
+// Wait for everything to be saved, then go on.
+function settle(anyway, done) {
+  saveAll();
+  var tries = 0;
+  (function wait() {
+    if (!anyUnsaved()) return done();
+    if (tries++ < 20) return setTimeout(wait, 250);
+    showMessage('Some changes couldn\u2019t be saved.', anyway, done);
+  })();
+}
+
+function anyUnsaved() {
+  return moves.length > 0 || $('.todo').filter(function() { return this.saving || isUnsaved($(this)); }).length > 0;
+}
+
+function clearTasks() {
+  flush(); // finishes any deletes
+  session++;
+  moves = [];
+  tasksLoaded = false;
+  doneShown = 0;
+  doneWaiting = [];
+  selected = $();
+  hideMessage();
+  closeMenu();
+  $('#claire, #done-list').empty();
+  $('#done').removeClass('open').hide();
+  $('#done-toggle').attr('aria-expanded', 'false');
+  refreshRows();
+}
+
+function switchList(id) {
+  $('body').removeClass('side-open');
+  if (id === listId) return;
+  settle('Switch anyway', function() {
+    clearTasks();
+    listId = id;
+    remembered(id);
+    var list = currentList();
+    $('#list-title').val(list ? list.title : '');
+    showStatus('Loading\u2026');
+    listTasks();
+  });
+}
+
+function createList(title) {
+  send('POST', 'users/@me/lists', { title: title }, function(list) {
+    lists.push(list);
+    switchList(list.id);
+  }, function(status) {
+    showFailure('Could not create that list.', status);
+  });
+}
+
+function renameList(title) {
+  var list = currentList();
+  if (!list) return;
+  if (!title || title === list.title) return $('#list-title').val(list.title);
+  send('PATCH', 'users/@me/lists/' + encodeURIComponent(list.id), { title: title }, function() {
+    list.title = title;
+    showLists();
+  }, function(status) {
+    $('#list-title').val(list.title);
+    showFailure('Could not rename that list.', status);
+  });
+}
+
+function logOut() {
+  settle('Log out anyway', endSession);
+}
+
+function endSession() {
+  clearTasks();
+  loggedOut(true);
+  auth.logout();
+  lists = [];
+  listId = '@default';
+  remembered('@default');
+  $('#lists').empty();
+  $('#list-title').val('');
+  $('body').removeClass('signed-in side-open');
+  showLogIn();
+}
+
+// ---- Tasks
+
 // Google returns at most 100 tasks at a time.
-function fetchAll(query, done, failed, tasks, pageToken) {
-  api('GET', '?maxResults=100&' + query + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''), null, function(result) {
+function fetchAll(query, done, failed, tasks, pageToken, list) {
+  var path = 'lists/' + encodeURIComponent(list || listId) + '/tasks?maxResults=100&' + query;
+  send('GET', path + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''), null, function(result) {
     var all = (tasks || []).concat((result && result.items) || []);
-    if (result && result.nextPageToken) return fetchAll(query, done, failed, all, result.nextPageToken);
+    if (result && result.nextPageToken) return fetchAll(query, done, failed, all, result.nextPageToken, list);
     done(all);
   }, failed);
 }
@@ -225,7 +342,7 @@ function reload() {
     showTasks(tasks);
     $('#claire .todo').each(function() {
       var row = $(this).parent();
-      if ($.inArray(this.id, open) >= 0) row.addClass('open').children('.more').attr('aria-expanded', 'true');
+      if ($.inArray(this.id, open) >= 0) row.addClass('open');
       if (id && this.id === id) row.find(field).setCursorPosition(start || 0);
     });
   });
@@ -237,10 +354,11 @@ function busy() {
   }).length > 0;
 }
 
-// ---- Completed tasks, loaded only when asked for, newest first
+// ---- Completed tasks, loaded only when asked for, newest first, ten at a time
 
-var doneDays = [30, 365, 0]; // how far back each "Show older" goes; 0 is everything
-var doneShown = 0;
+var doneDays = [30, 365, 0]; // how far back each request goes; 0 is everything
+var doneShown = 0;           // how many of those have been made
+var doneWaiting = [];        // loaded but not shown yet
 
 function toggleDone() {
   var open = !$('#done').hasClass('open');
@@ -251,28 +369,40 @@ function toggleDone() {
 }
 
 function loadDone() {
+  if (doneWaiting.length >= 10 || doneShown === doneDays.length) return showDone();
   var days = doneDays[doneShown];
   var since = days ? new Date(Date.now() - days * 864e5) : new Date(0);
-  $('#done-more').prop('disabled', true).text('Loading…').show();
+  $('#done-more').prop('disabled', true).text('Loading\u2026').show();
   fetchAll('showCompleted=true&showHidden=true&completedMin=' + encodeURIComponent(since.toISOString()), function(tasks) {
     doneShown++;
-    var more = doneShown < doneDays.length;
-    $('#done-more').prop('disabled', false).text('Show older').toggle(more);
-    $.each(tasks, function(i, task) {
-      if (task.status === 'completed' && !document.getElementById(task.id)) $('#done-list').append(taskRow(task));
-    });
-    sortDone();
-    var none = !$('#done-list li').length;
-    $('#done-none').text(more ? 'None in the last ' + (days === 30 ? '30 days' : 'year') : 'None').toggle(none);
+    doneWaiting = $.grep(tasks, function(task) {
+      return task.status === 'completed' && !document.getElementById(task.id) && !isRemoved(task.id);
+    }).sort(function(a, b) { return a.completed < b.completed ? 1 : a.completed > b.completed ? -1 : 0; });
+    loadDone();
   }, function(status) {
-    $('#done-more').prop('disabled', false).text(doneShown ? 'Show older' : 'Try again');
+    $('#done-more').prop('disabled', false).text('Try again').show();
     showFailure('Could not load completed tasks.', status);
   });
 }
 
+function isRemoved(id) {
+  return removals.some(function(r) { return r.todos.is(function() { return this.id === id; }); });
+}
+
+function showDone() {
+  $('#done-list').append($.map(doneWaiting.splice(0, 10), function(task) {
+    return document.getElementById(task.id) ? null : taskRow(task);
+  }));
+  var more = doneWaiting.length > 0 || doneShown < doneDays.length;
+  $('#done-more').prop('disabled', false).text('Load more').toggle(more);
+  sortDone();
+  $('#done-none').toggle(!$('#done-list li').length);
+}
+
+// The total is only known once everything has been loaded.
 function updateDoneCount() {
-  var since = ['', ' in the last 30 days', ' in the last year', ''][doneShown];
-  $('#done-toggle').text('Completed' + (doneShown ? ' (' + $('#done-list li').length + since + ')' : ''));
+  var all = doneShown === doneDays.length;
+  $('#done-toggle').text('Completed' + (all ? ' (' + ($('#done-list li').length + doneWaiting.length) + ')' : ''));
 }
 
 function sortDone() {
@@ -332,20 +462,22 @@ function text(value) {
 function taskRow(task) {
   var done = task.status === 'completed';
   var todo = $('<textarea class="todo" rows="1" aria-label="Task"></textarea>').toggleClass('checked', done)
-    .val(text(task.title).replace(/\n/g, ' '));
+    .val(text(task.title));
   var notes = $('<textarea class="notes" rows="3" placeholder="Notes" aria-label="Notes"></textarea>').val(text(task.notes));
   var due = $('<input type="date" class="due" aria-label="Due date" min="2000-01-01" max="2999-12-31"/>').val((task.due || '').slice(0, 10));
   var row = $('<li></li>').toggleClass('subtask', !!task.parent).append(
     $('<span class="handle" title="Drag to move" aria-hidden="true">&#8942;&#8942;</span>'),
     $('<input type="checkbox" aria-label="Completed"/>').prop('checked', done),
     todo,
-    $('<button type="button" class="more" aria-label="Notes and due date" title="Notes and due date" aria-expanded="false">&#8943;</button>'),
+    $('<button type="button" class="more" aria-label="Task options" aria-haspopup="true" aria-expanded="false">&#8942;</button>'),
     $('<div class="meta"><span class="when"></span><span class="preview"></span></div>'),
-    $('<div class="details"></div>').append(notes, $('<label>Due </label>').append(due), $('<button type="button" class="clear-due">Clear date</button>'),
-      $('<div class="move"></div>').append($.map([['subtask', 'Add a subtask'], ['top', 'Move to top'], ['up', 'Move up'], ['down', 'Move down'], ['indent', 'Make subtask'], ['outdent', 'Move out']], function(b) {
-        return $('<button type="button"></button>').attr('data-move', b[0]).text(b[1]);
-      })),
-      $('<button type="button" class="delete-this">Delete</button>'))
+    $('<div class="details"></div>').append(notes, $('<label>Due </label>').append(due), $('<button type="button" class="clear-due">Clear date</button>')),
+    $('<div class="menu" role="menu"></div>').append($.map([
+      ['details', 'Notes and due date'], ['subtask', 'Add a subtask'], ['indent', 'Make subtask'], ['outdent', 'Move out'],
+      ['top', 'Move to top'], ['up', 'Move up'], ['down', 'Move down'], ['delete', 'Delete']
+    ], function(item) {
+      return $('<button type="button" role="menuitem"></button>').attr('data-move', item[0]).text(item[1]);
+    }))
   );
   if (task.id) todo.attr('id', task.id);
   todo[0].parentTask = task.parent;
@@ -682,8 +814,8 @@ function addSubtask(todo) {
 // Last chance as the page closes: requests that outlive it.
 function flush() {
   if (!signedIn()) return;
-  var headers = { 'Authorization': 'Bearer ' + gapi.auth.getToken().access_token, 'Content-Type': 'application/json' };
-  var url = 'https://www.googleapis.com/tasks/v1/lists/' + TASK_LIST + '/tasks';
+  var headers = { 'Authorization': 'Bearer ' + auth.token(), 'Content-Type': 'application/json' };
+  var url = API + 'lists/' + encodeURIComponent(listId) + '/tasks';
   $('.todo').each(function() {
     var el = this, todo = $(el), id = todo.attr('id'), sent = current(todo);
     if (!isUnsaved(todo) || (el.saving && !id)) return;

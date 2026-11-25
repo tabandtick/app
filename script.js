@@ -18,8 +18,13 @@ $.fn.setCursorPosition = function(start, end) {
 
 function updateToDoCount() {
 	var count = $('#claire .todo').filter(function() { return this.value.length > 0; }).length;
-	$('#total').text(count);
+	$('#total').text(tasksLoaded ? count : '');
 	$('#empty').toggle(tasksLoaded && !$('#claire li').length);
+	var list = currentList();
+	if (list && tasksLoaded) {
+		list.count = count;
+		$('#lists [aria-current] .count').text(count);
+	}
 }
 
 // A row only gets a tick box once it has a title.
@@ -128,6 +133,21 @@ function keydown(event) {
 	}
 }
 
+function toggleDetails(row) {
+	row.toggleClass('open');
+	if (row.hasClass('open')) row.find('.notes').focus();
+}
+
+function openMenu(row) {
+	row.addClass('menu-open').children('.more').attr('aria-expanded', 'true');
+	var menu = row.children('.menu').removeClass('up');
+	if (menu[0].getBoundingClientRect().bottom > window.innerHeight) menu.addClass('up');
+}
+
+function closeMenu() {
+	$('li.menu-open').removeClass('menu-open').children('.more').attr('aria-expanded', 'false');
+}
+
 // ---- Dragging. A line shows where the row will land; moving right or left makes
 // it a subtask or not. Nothing moves until it is dropped.
 
@@ -186,7 +206,9 @@ document.addEventListener('pointermove', dragMove);
 document.addEventListener('pointerup', dragEnd);
 document.addEventListener('pointercancel', dragEnd);
 document.addEventListener('keydown', function(event) {
-	if (event.key === 'Escape') dragEnd();
+	if (event.key !== 'Escape') return;
+	dragEnd();
+	closeMenu();
 });
 
 $(document).ready(function() {
@@ -199,10 +221,17 @@ $(document).ready(function() {
 		})
 		.on('focusout', '.todo, .notes, .due', function() { saveTask($(this).closest('li').children('.todo')); })
 		.on('input', '.todo', function() {
-			if (/\n/.test(this.value)) this.value = this.value.replace(/\n+/g, ' '); // pasted lines
 			autosize($(this));
 			updateToDoCount();
 			toggleToDoCheckboxes();
+		})
+		.on('paste', '.todo', function(event) {
+			var data = event.originalEvent && event.originalEvent.clipboardData;
+			var pasted = data && data.getData('text');
+			if (!pasted || !/[\r\n]/.test(pasted)) return;
+			event.preventDefault(); // a task is one line, unless Google already had more
+			this.setRangeText(pasted.trim().replace(/\s*[\r\n]+\s*/g, ' '), this.selectionStart, this.selectionEnd, 'end');
+			$(this).trigger('input');
 		})
 		.on('input change', '.todo, .notes, .due', function() {
 			var row = $(this).closest('li');
@@ -211,10 +240,11 @@ $(document).ready(function() {
 		})
 		.on('change', 'input[type=checkbox]', function() { setCompleted($(this)); })
 		.on('click', '.more', function() {
-			var row = $(this).parent().toggleClass('open');
-			$(this).attr('aria-expanded', String(row.hasClass('open')));
-			if (row.hasClass('open')) row.find('.notes').focus();
+			var row = $(this).parent(), open = row.hasClass('menu-open');
+			closeMenu();
+			if (!open) openMenu(row);
 		})
+		.on('click', '.meta', function() { toggleDetails($(this).parent()); })
 		.on('click', '.clear-due', function() {
 			var row = $(this).closest('li');
 			row.find('.due').val('');
@@ -223,16 +253,37 @@ $(document).ready(function() {
 		});
 
 	$('ul.list').on('click', '[data-move]', function() {
-		moveRow($(this).closest('li').children('.todo'), $(this).attr('data-move'));
+		var row = $(this).closest('li'), todo = row.children('.todo'), how = $(this).attr('data-move');
+		closeMenu();
+		if (how === 'details') toggleDetails(row);
+		else if (how === 'delete') deleteAndMoveOn(todo);
+		else moveRow(todo, how);
 	});
-	$('ul.list').on('click', '.delete-this', function() {
-		deleteAndMoveOn($(this).closest('li').children('.todo'));
+	$(document).on('click', function(event) {
+		if (!$(event.target).closest('.menu, .more').length) closeMenu();
 	});
+	$('#authorize-button').click(handleAuthClick);
+	$('#lists').on('click', '[data-list]', function() { switchList($(this).attr('data-list')); });
+	$('#side-toggle').click(function() { $('body').toggleClass('side-open'); });
+	$('#new-list').click(function() { $('#new-list-form').show().children('input').val('').focus(); });
+	$('#new-list-form').on('submit', function(event) {
+		event.preventDefault();
+		var title = $.trim($(this).hide().children('input').val());
+		if (title) createList(title);
+	}).on('keydown', function(event) {
+		if (event.which === 27) $(this).hide();
+	});
+	$('#list-title').on('change', function() { renameList($.trim(this.value)); })
+		.on('keydown', function(event) {
+			if (event.which === 13) this.blur();
+			if (event.which === 27) { $(this).val((currentList() || {}).title || ''); this.blur(); }
+		});
 	$('#log-out-button').click(logOut);
 	$('#done-toggle').click(toggleDone);
 	$('#done-more').click(loadDone);
 	$(window).on('resize', autosizeAll);
 
 	updateToDoCount();
+	checkAuth();
 
 });

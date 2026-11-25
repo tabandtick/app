@@ -1,95 +1,82 @@
-<html>
+<!doctype html>
+<html lang="en">
   <head>
-   <title>MyTo.Do</title>
-   <meta name="viewport" content="width=device-width, initial-scale=1">
-   <link rel="shortcut icon" href="favicon.ico" type="image/x-icon" />
-
-   <script type="text/javascript" src="jquery.js"></script>
-
-    <!-- Latest compiled and minified CSS -->
-    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
-    <!-- Optional theme -->
-    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap-theme.min.css" integrity="sha384-rHyoN1iRsVXV4nD0JutlnGaslCJuC7uwjduW9SVrLvRYooPp2bWYgmgJQIXwl/Sp" crossorigin="anonymous">
-    <!-- Latest compiled and minified JavaScript -->
-    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js" integrity="sha384-Tc5IQib027qvyjSMfHjOMaLkfuWVxZxUPnCJA7l2mCWNIpG9mGCD8wGNIcPD7Txa" crossorigin="anonymous"></script>
-
+    <meta charset="utf-8">
+    <title>Tab &amp; Tick</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="A fast to-do list in your new tab. Works with Google Tasks.">
+    <link rel="icon" href="icons/icon-32.png" type="image/png">
     <link rel="stylesheet" href="style.css">
   </head>
 
   <body>
-    <div id="header">
-      <h1>
-        <span style="color:#4885ed">My</span><span style="color:#3cba54">To</span><span style="color:#4885ed">.</span><span style="color:#3cba54">Do</span>
-      </h1>
-      <!-- <img src="public/img/mytodo.png"/> -->
-      <span id="total"></span>
-    </div>
+    <header id="header">
+      <button type="button" id="side-toggle" aria-label="Lists">&#9776;</button>
+      <img src="icons/logo.svg" width="32" height="32" alt="">
+      <h1>Tab &amp; Tick</h1>
+      <div id="status">Loading&hellip;</div>
+      <div id="authorize-div" style="display:none"><button type="button" id="authorize-button">Log in</button></div>
+      <button type="button" id="log-out-button">Log out</button>
+    </header>
 
-    <div id="status">Loading&hellip;</div>
+    <nav id="side" aria-label="Lists">
+      <h2>Lists</h2>
+      <ul id="lists"></ul>
+      <button type="button" id="new-list">+ New list</button>
+      <form id="new-list-form"><input type="text" aria-label="Name of the new list" placeholder="List name" maxlength="1024"></form>
+    </nav>
 
-    <button type="button" class="btn btn-default btn-lg" id="log-out-button" style="display:none">Log Out</button>
-
-    <div id="authorize-div" style="display:none">
-      <button class="btn btn-default btn-lg" id="authorize-button" onclick="handleAuthClick(event)">
-        Log In
-      </button>
-    </div>
-
-    <div id="new-task-div">
-      <button class="btn btn-default btn-lg" id="new-task-button">
-        New Task
-      </button>
-      <button class="btn btn-default btn-lg" id="delete-task-button">
-        Delete Task
-      </button>
-    </div>
-
-    <!-- <div id="container">
-      <ul class="list">
-        <li><input type="text" class="todo"/><input type="checkbox"/></li>
-      </ul>
-    </div> -->
-
-    <div id="drop-line"></div>
-
-    <div id="message" role="status"><span></span> <button type="button"></button></div>
-
-    <div id="list-div">
-      <ul class="list" id="claire">
-      </ul>
-      <div id="empty">
-        <svg width="180" height="132" viewBox="0 0 180 132" fill="none" aria-hidden="true">
-          <rect x="30" y="6" width="120" height="120" rx="12" fill="#eef3fd"/>
-          <rect x="46" y="26" width="20" height="20" rx="5" fill="#3cba54"/>
-          <path d="M51 36l4 4 7-8" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M78 36h54" stroke="#b9cdf6" stroke-width="6" stroke-linecap="round"/>
-          <rect x="46" y="56" width="20" height="20" rx="5" fill="#3cba54"/>
-          <path d="M51 66l4 4 7-8" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M78 66h38" stroke="#b9cdf6" stroke-width="6" stroke-linecap="round"/>
-          <rect x="47.500" y="87.500" width="17" height="17" rx="4" stroke="#4885ed" stroke-width="3" stroke-dasharray="5 4"/>
-          <path d="M78 96h20" stroke="#4885ed" stroke-width="6" stroke-linecap="round"/>
-          <path d="M108 88v16" stroke="#4885ed" stroke-width="3" stroke-linecap="round"/>
-        </svg>
-        <h2>Nothing to do</h2>
-        <p>Add a task and it&rsquo;ll appear in Google Tasks too.</p>
-        <button type="button" id="empty-new">Add a task</button>
+    <main>
+      <div id="welcome">
+        <h2>A fast to-do list in your new tab</h2>
+        <p>Works with Google Tasks. Log in to see your tasks.</p>
       </div>
 
-      <div id="done">
-        <button type="button" id="done-toggle" aria-expanded="false" aria-controls="done-body">Completed</button>
-        <div id="done-body">
-          <ul class="list" id="done-list">
-          </ul>
-          <p id="done-none"></p>
-          <button type="button" id="done-more">Show older</button>
+      <div id="card">
+        <div id="card-head">
+          <input type="text" id="list-title" aria-label="List name" maxlength="1024" spellcheck="false">
+          <span id="total"></span>
+          <button type="button" id="delete-task-button">Delete</button>
+        </div>
+        <button type="button" id="new-task-button">+ Add a task</button>
+
+        <ul class="list" id="claire"></ul>
+
+        <div id="empty">
+          <svg width="180" height="132" viewBox="0 0 180 132" fill="none" aria-hidden="true">
+            <rect x="30" y="6" width="120" height="120" rx="12" fill="var(--tint)"/>
+            <rect x="46" y="26" width="20" height="20" rx="10" fill="var(--accent)"/>
+            <path d="M51 36l4 4 7-8" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M78 36h54" stroke="var(--line)" stroke-width="6" stroke-linecap="round"/>
+            <rect x="46" y="56" width="20" height="20" rx="10" fill="var(--accent)"/>
+            <path d="M51 66l4 4 7-8" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M78 66h38" stroke="var(--line)" stroke-width="6" stroke-linecap="round"/>
+            <rect x="47.500" y="87.500" width="17" height="17" rx="8.500" stroke="var(--accent)" stroke-width="3" stroke-dasharray="5 4"/>
+            <path d="M78 96h20" stroke="var(--accent)" stroke-width="6" stroke-linecap="round"/>
+            <path d="M108 88v16" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/>
+          </svg>
+          <h2>Nothing to do</h2>
+          <p>Add a task and it&rsquo;ll appear in Google Tasks too.</p>
+          <button type="button" id="empty-new">Add a task</button>
+        </div>
+
+        <div id="done">
+          <button type="button" id="done-toggle" aria-expanded="false" aria-controls="done-body">Completed</button>
+          <div id="done-body">
+            <ul class="list" id="done-list"></ul>
+            <p id="done-none">Nothing completed yet</p>
+            <button type="button" id="done-more">Load more</button>
+          </div>
         </div>
       </div>
-    </div>
+    </main>
 
+    <div id="drop-line"></div>
+    <div id="message" role="status"><span></span> <button type="button"></button></div>
+
+    <script src="jquery.js"></script>
+    <script src="auth.js"></script>
+    <script src="script.js"></script>
+    <script src="tasks.js"></script>
   </body>
-
-  <script type="text/javascript" src="script.js"></script>
-  <script type="text/javascript" src="tasks.js"></script>
-  <!-- After tasks.js: the onload callback, checkAuth, is defined there. -->
-  <script src="https://apis.google.com/js/client.js?onload=checkAuth"></script>
 </html>
