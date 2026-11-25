@@ -15,9 +15,10 @@ function handleAuthResult(ok) {
 }
 
 function handleAuthClick() {
-  auth.login(function(ok) {
+  auth.login(function(ok, reason) {
     if (ok) loggedOut(false);
     handleAuthResult(ok);
+    if (!ok) showMessage('Google didn\u2019t log you in' + (reason ? ' (' + reason + ').' : '.'), null, null, 10000);
   }, loggedOut());
 }
 
@@ -152,6 +153,7 @@ function listTasks() {
       return listTasks();
     }
     showLogIn();
+    showMessage('Logged in, but your tasks couldn\u2019t be loaded (' + (status || 'no connection') + ').', 'Retry', checkAuth);
   });
 }
 

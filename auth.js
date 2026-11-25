@@ -3,7 +3,7 @@
 //   silent(done)   sign in without asking      login(done)  ask if need be
 //   expired(done)  replace a refused token     token()      the token, or null
 //   logout()       forget the token
-// done is called with true or false.
+// done is called with true or false, and the reason if false.
 
 var SCOPE = 'https://www.googleapis.com/auth/tasks';
 var CLIENT_ID = '146982777170-h1btpb05ltctf58n4f9foqof665i08j7.apps.googleusercontent.com';
@@ -13,9 +13,10 @@ function extensionAuth() {
 
   function get(interactive, done) {
     chrome.identity.getAuthToken({ interactive: interactive }, function(result) {
-      if (chrome.runtime.lastError) console.warn('Sign-in:', chrome.runtime.lastError.message);
+      var reason = chrome.runtime.lastError && chrome.runtime.lastError.message;
+      if (reason) console.warn('Sign-in:', reason);
       token = (result && result.token) || (typeof result === 'string' && result) || null;
-      done(!!token);
+      done(!!token, reason);
     });
   }
 
@@ -50,7 +51,7 @@ function webAuth() {
   function authorize(options, done) {
     if (!ready) return waiting.push(function() { authorize(options, done); });
     gapi.auth.authorize($.extend({ client_id: CLIENT_ID, scope: SCOPE }, options), function(result) {
-      done(!!(result && !result.error));
+      done(!!(result && !result.error), result && (result.error_subtype || result.error));
     });
   }
 
