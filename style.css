@@ -292,7 +292,7 @@ ul.list li.selected {
   border-left-color: var(--accent);
 }
 
-#claire li.subtask {
+ul.list li.subtask {
   padding-left: 40px;
 }
 
@@ -657,7 +657,7 @@ li.dragging {
     margin: 0 8px 6px;
   }
 
-  #claire li.subtask {
+  ul.list li.subtask {
     padding-left: 28px;
   }
 

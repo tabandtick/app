@@ -373,13 +373,14 @@ function toggleDone() {
 function loadDone() {
   if (doneWaiting.length >= 10 || doneShown === doneDays.length) return showDone();
   var days = doneDays[doneShown];
-  var since = days ? new Date(Date.now() - days * 864e5) : new Date(0);
   $('#done-more').prop('disabled', true).text('Loading\u2026').show();
-  fetchAll('showCompleted=true&showHidden=true&completedMin=' + encodeURIComponent(since.toISOString()), function(tasks) {
+  // Not completedMin: subtasks completed along with their parent may have no date.
+  var since = days ? '&updatedMin=' + encodeURIComponent(new Date(Date.now() - days * 864e5).toISOString()) : '';
+  fetchAll('showCompleted=true&showHidden=true' + since, function(tasks) {
     doneShown++;
-    doneWaiting = $.grep(tasks, function(task) {
+    doneWaiting = inDoneOrder($.grep(tasks, function(task) {
       return task.status === 'completed' && !document.getElementById(task.id) && !isRemoved(task.id);
-    }).sort(function(a, b) { return a.completed < b.completed ? 1 : a.completed > b.completed ? -1 : 0; });
+    }));
     loadDone();
   }, function(status) {
     $('#done-more').prop('disabled', false).text('Try again').show();
@@ -391,8 +392,32 @@ function isRemoved(id) {
   return removals.some(function(r) { return r.todos.is(function() { return this.id === id; }); });
 }
 
+function doneDate(task) {
+  return task.completed || task.updated || '';
+}
+
+// Newest first, with subtasks straight after their parent if it is there too.
+function inDoneOrder(tasks) {
+  var byId = {}, children = {}, top = [];
+  $.each(tasks, function(i, task) { byId[task.id] = task; });
+  $.each(tasks, function(i, task) {
+    if (byId[task.parent]) (children[task.parent] = children[task.parent] || []).push(task);
+    else top.push(task);
+  });
+  top.sort(function(a, b) { return doneDate(a) < doneDate(b) ? 1 : doneDate(a) > doneDate(b) ? -1 : 0; });
+  return $.map(top, function(task) {
+    return [task].concat((children[task.id] || []).sort(function(a, b) {
+      return a.position < b.position ? -1 : a.position > b.position ? 1 : 0;
+    }));
+  });
+}
+
 function showDone() {
-  $('#done-list').append($.map(doneWaiting.splice(0, 10), function(task) {
+  var next = doneWaiting.splice(0, 10);
+  while (next.length && doneWaiting.length && doneWaiting[0].parent && next.some(function(task) { return task.id === doneWaiting[0].parent; })) {
+    next.push(doneWaiting.shift()); // don't split a family
+  }
+  $('#done-list').append($.map(next, function(task) {
     return document.getElementById(task.id) ? null : taskRow(task);
   }));
   var more = doneWaiting.length > 0 || doneShown < doneDays.length;
@@ -408,11 +433,22 @@ function updateDoneCount() {
 }
 
 function sortDone() {
-  var rows = $('#done-list li').get().sort(function(a, b) {
-    var x = $(a).children('.todo')[0].completedAt || '', y = $(b).children('.todo')[0].completedAt || '';
+  var rows = $('#done-list li'), ids = {}, top = [];
+  function el(row) { return $(row).children('.todo')[0]; }
+  rows.each(function() { ids[el(this).id] = true; });
+  rows.each(function() {
+    var child = !!(el(this).parentTask && ids[el(this).parentTask]);
+    $(this).toggleClass('subtask', child);
+    if (!child) top.push(this);
+  });
+  top.sort(function(a, b) {
+    var x = el(a).completedAt || '', y = el(b).completedAt || '';
     return x < y ? 1 : x > y ? -1 : 0;
   });
-  $('#done-list').append(rows);
+  $.each(top, function(i, row) {
+    var id = el(row).id;
+    $('#done-list').append(row, id ? rows.filter('.subtask').filter(function() { return el(this).parentTask === id; }) : null);
+  });
   if (rows.length) $('#done-none').hide();
   refreshRows();
 }
@@ -425,7 +461,7 @@ function setCompleted(checkbox) {
   var id = todo.attr('id');
   todo.toggleClass('checked', done);
   if (!id) return; // saveTask sends it once the task exists
-  var hadSubtasks = subtaskRows(todo).length > 0;
+  var subtasks = done ? subtaskRows(todo).children('.todo').get() : [];
   api('PATCH', '/' + id, done ? { status: 'completed' } : { status: 'needsAction', completed: null }, function(result) {
     if (checkbox.prop('checked') !== done) return; // changed again since
     todo[0].completedAt = done ? (result && result.completed) || new Date().toISOString() : undefined;
@@ -434,23 +470,56 @@ function setCompleted(checkbox) {
     if (done) {
       $('#done-list').prepend(row);
       sortDone();
-      if (hadSubtasks) reload(); // Google decides what happens to its subtasks
+      if (subtasks.length) followSubtasks(checkbox, subtasks);
     } else {
-      $('#claire').prepend(row);
-      refreshRows();
+      $('#claire').prepend(row.removeClass('subtask'));
+      sortDone(); // its subtasks may no longer have a parent there
       reload(); // puts it back in its place
     }
     renderMeta(row);
-    if (done && !removals.length) { // keep the undo for a delete, if there is one
-      showMessage('Task completed.', 'Undo', function() {
-        checkbox.prop('checked', false);
-        setCompleted(checkbox);
-      }, 7000);
-    }
+    if (done && !subtasks.length) offerUntick(checkbox, []);
   }, function(status) {
     checkbox.prop('checked', !done);
     todo.toggleClass('checked', !done);
     showFailure('Could not update that task.', status);
+  });
+}
+
+function offerUntick(checkbox, subtasks) {
+  if (removals.length) return; // keep the undo for a delete
+  var count = subtasks.length;
+  showMessage('Task ' + (count ? 'and ' + count + ' subtask' + (count > 1 ? 's ' : ' ') : '') + 'completed.', 'Undo', function() {
+    $.each([checkbox[0]].concat(subtasks), function(i, box) {
+      $(box).prop('checked', false);
+      setCompleted($(box));
+    });
+  }, 7000);
+}
+
+// Google decides whether completing a task completes its subtasks, so ask it.
+function followSubtasks(checkbox, subtasks) {
+  var left = subtasks.length, moved = [];
+  function next() {
+    if (--left) return;
+    if (moved.length) sortDone();
+    offerUntick(checkbox, moved);
+    reload();
+  }
+  $.each(subtasks, function(i, el) {
+    var todo = $(el), row = todo.parent();
+    if (!el.id) return next();
+    api('GET', '/' + el.id, null, function(task) {
+      var open = row.parent().is('#claire') && !el.deleted;
+      if (open && task && task.status === 'completed') {
+        saveTask(todo);
+        el.completedAt = doneDate(task);
+        todo.addClass('checked');
+        moved.push(todo.siblings('input[type=checkbox]').prop('checked', true)[0]);
+        $('#done-list').append(row.removeClass('selected'));
+        renderMeta(row);
+      }
+      next();
+    }, next);
   });
 }
 
@@ -483,7 +552,7 @@ function taskRow(task) {
   );
   if (task.id) todo.attr('id', task.id);
   todo[0].parentTask = task.parent;
-  todo[0].completedAt = task.completed;
+  todo[0].completedAt = done ? doneDate(task) : undefined;
   todo[0].saved = { title: todo.val(), notes: notes.val(), due: due.val() };
   todo[0].lastTitle = todo.val();
   renderMeta(row);
