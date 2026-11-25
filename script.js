@@ -108,8 +108,12 @@ function keydown(event) {
 			}
 			else if (!completed && !length && next.length) {
 				event.preventDefault();
-				removeRow(todo);
-				next.setCursorPosition(0);
+				var blank = row.find('.notes').val() === '' && row.find('.due').val() === '' && !subtaskRows(todo).length;
+				if (blank) removeBlank(todo, next, 0);
+				else {
+					removeRow(todo);
+					next.setCursorPosition(0);
+				}
 			}
 		break;
 
@@ -218,6 +222,7 @@ $(document).ready(function() {
 		.on('focusin', 'li', function() {
 			$('li.selected').removeClass('selected');
 			selected = $(this).addClass('selected').children('.todo');
+			if (selected.val()) selected[0].lastTitle = selected.val(); // for undo, if it's then cleared
 		})
 		.on('focusout', '.todo, .notes, .due', function() { saveTask($(this).closest('li').children('.todo')); })
 		.on('input', '.todo', function() {

@@ -485,6 +485,7 @@ function taskRow(task) {
   todo[0].parentTask = task.parent;
   todo[0].completedAt = task.completed;
   todo[0].saved = { title: todo.val(), notes: notes.val(), due: due.val() };
+  todo[0].lastTitle = todo.val();
   renderMeta(row);
   return row;
 }
@@ -711,6 +712,7 @@ function mergeRows(target, source) {
     return;
   }
   var before = current(target), from = current(source);
+  if (!from.title && !from.notes && !from.due) return removeBlank(source, target, before.title.length);
   setValues(target, {
     title: before.title + from.title,
     notes: before.notes + (before.notes && from.notes ? '\n' : '') + from.notes,
@@ -722,6 +724,21 @@ function mergeRows(target, source) {
     setValues(target, before);
     saveTask(target);
   });
+}
+
+// Delete a row with nothing in it. Undo brings back the title it had.
+function removeBlank(todo, next, caret) {
+  var el = todo[0];
+  if (!todo.attr('id') && !el.saving) { // never saved, so there's nothing to undo
+    todo.parent().remove();
+    refreshRows();
+  } else {
+    var title = el.lastTitle || '';
+    removeRow(todo, null, function() {
+      setValues(todo, $.extend(current(todo), { title: title }));
+    });
+  }
+  next.setCursorPosition(caret);
 }
 
 function setValues(todo, values) {
