@@ -8,15 +8,16 @@ server or build step. Not made or endorsed by Google.
 
 - **Add a task** adds one at the top. It is saved once it has a title.
 - **Typing** in a row edits its title, and saves shortly after you stop.
-- **The circle** completes a task, or reopens it.
+- **The circle** completes a task, or reopens it. A completed subtask stays under its
+  task until that is completed too.
 - **The dots on the right** of a row open its menu: notes and due date, subtasks,
   moving and deleting.
 - **Delete** deletes the task you last clicked, and any subtasks, and moves on.
 - **Enter** splits a row in two. **Backspace** at the start joins it to the row
   above, and **Delete** at the end joins the next one to it.
 - **Drag the handle** to move a task: right to make it a subtask, left to move out.
-- **Alt+up/down** moves a task. **Cmd/Ctrl+]** makes it a subtask and **[** moves
-  it out.
+- **Tab** at the start of a task makes it a subtask, and **Shift+Tab** moves it out.
+- **Alt+up/down** moves a task. **Cmd/Ctrl+]** and **[** indent it from anywhere.
 - **Lists** are in the sidebar. Click a list's name above its tasks to rename it.
 
 Completing, deleting and joining can be undone for 7 seconds. Google is only told

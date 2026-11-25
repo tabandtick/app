@@ -317,7 +317,8 @@ ul.list li.subtask {
   visibility: visible;
 }
 
-#done-list .handle {
+#done-list .handle,
+.handle.off {
   visibility: hidden !important;
 }
 
@@ -499,7 +500,8 @@ li.menu-open .menu {
 li.subtask [data-move='indent'],
 li.subtask [data-move='subtask'],
 li:not(.subtask) [data-move='outdent'],
-#done-list .menu button:not([data-move='details']):not([data-move='delete']) {
+#done-list .menu button:not([data-move='details']):not([data-move='delete']),
+.handle.off ~ .menu button:not([data-move='details']):not([data-move='delete']) {
   display: none;
 }
 

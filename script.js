@@ -17,7 +17,7 @@ $.fn.setCursorPosition = function(start, end) {
 };
 
 function updateToDoCount() {
-	var count = $('#claire .todo').filter(function() { return this.value.length > 0; }).length;
+	var count = $('#claire .todo').not('.checked').filter(function() { return this.value.length > 0; }).length;
 	$('#total').text(tasksLoaded ? count : '');
 	$('#empty').toggle(tasksLoaded && !$('#claire li').length);
 	var list = currentList();
@@ -35,6 +35,7 @@ function toggleToDoCheckboxes() {
 }
 
 var selected = $();
+var tabbing = false;
 
 $('#new-task-button, #empty-new').click(function() { newTask(); });
 
@@ -89,6 +90,17 @@ function keydown(event) {
 	if (how) {
 		event.preventDefault();
 		moveRow(todo, how);
+		return;
+	}
+
+	// Tab at the start indents, and Shift+Tab moves out; anywhere else, or if it
+	// can't be done, they move focus as usual. So they do in a row reached by Tab.
+	if (code === 9) {
+		if (position !== 0 || !caret || command || event.altKey || el.tabbedTo) return;
+		var pressed = tabbing;
+		tabbing = false; // moving the row focuses it again, which isn't reaching it by Tab
+		if (moveRow(todo, event.shiftKey ? 'outdent' : 'indent')) event.preventDefault();
+		else tabbing = pressed;
 		return;
 	}
 
@@ -201,7 +213,7 @@ function dragEnd(event) {
 
 document.addEventListener('pointerdown', function(event) {
 	var handle = $(event.target).closest('#claire .handle');
-	if (!handle.length || event.button || drag) return;
+	if (!handle.length || event.button || drag || handle.siblings('.todo').hasClass('checked')) return;
 	event.preventDefault(); // no text selection
 	var row = handle.parent(), todo = row.children('.todo');
 	drag = { todo: todo, rows: row.add(subtaskRows(todo)), x: event.clientX, y: event.clientY, level: row.hasClass('subtask') ? 1 : 0 };
@@ -222,6 +234,7 @@ $(document).ready(function() {
 		.on('focusin', 'li', function() {
 			$('li.selected').removeClass('selected');
 			selected = $(this).addClass('selected').children('.todo');
+			if (selected[0]) selected[0].tabbedTo = tabbing;
 			if (selected.val()) selected[0].lastTitle = selected.val(); // for undo, if it's then cleared
 		})
 		.on('focusout', '.todo, .notes, .due', function() { saveTask($(this).closest('li').children('.todo')); })
@@ -284,6 +297,15 @@ $(document).ready(function() {
 			if (event.which === 27) { $(this).val((currentList() || {}).title || ''); this.blur(); }
 		});
 	$('#log-out-button').click(logOut);
+	// Was focus moved here by the Tab key? Any other key or a click says no.
+	document.addEventListener('keydown', function(event) {
+		tabbing = event.key === 'Tab';
+		if (!tabbing && event.key !== 'Shift' && event.target) event.target.tabbedTo = false;
+	}, true);
+	document.addEventListener('pointerdown', function(event) {
+		tabbing = false;
+		event.target.tabbedTo = false;
+	}, true);
 	$('#done-toggle').click(toggleDone);
 	$('#done-more').click(loadDone);
 	$(window).on('resize', autosizeAll);

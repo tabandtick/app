@@ -145,6 +145,7 @@ function listTasks() {
     showStatus('');
     $('body').addClass('signed-in');
     showTasks(tasks);
+    loadTicked();
     loadLists();
   }, function(status) {
     if (status === 404 && listId !== '@default') { // that list has been deleted
@@ -308,12 +309,55 @@ function inOrder(tasks) {
 }
 
 function showTasks(tasks) {
+  var ticked = $('#claire li').filter(function() { return $(this).children('.todo').hasClass('checked'); }).detach();
   $('#claire').empty().append($.map(inOrder(tasks), taskRow));
   $('#claire .todo').each(function() { // not indented if its parent isn't here
     if (this.parentTask && !document.getElementById(this.parentTask)) $(this).parent().removeClass('subtask');
   });
+  ticked.each(function() {
+    var todo = $(this).children('.todo');
+    if (!document.getElementById(todo.attr('id')) && openParent(todo).length) placeSubtask(todo);
+  });
   $('#done').show();
   refreshRows();
+}
+
+// The open task that this one is a subtask of, if it is on screen.
+function openParent(todo) {
+  var id = todo[0].parentTask;
+  return $('#claire .todo').not('.checked').filter(function() { return id && this.id === id; });
+}
+
+// Put a row among its parent's other subtasks.
+function placeSubtask(todo) {
+  var parent = openParent(todo), row = todo.parent().addClass('subtask');
+  var before = subtaskRows(parent).not(row).filter(function() {
+    return ($(this).children('.todo')[0].position || '') < (todo[0].position || '');
+  }).last();
+  (before.length ? before : parent.parent()).after(row);
+}
+
+// Ticked subtasks stay under their parent until it is done too. Returns the tasks
+// that don't belong under an open one.
+function placeTicked(tasks) {
+  var rest = $.grep(tasks, function(task) {
+    if (task.status !== 'completed' || document.getElementById(task.id) || isRemoved(task.id)) return false;
+    if (!task.parent) return true;
+    var row = taskRow(task), todo = row.children('.todo');
+    if (!openParent(todo).length) return true;
+    placeSubtask(todo);
+    return false;
+  });
+  refreshRows();
+  return rest;
+}
+
+// Google can't be asked for these alone, so look at what has changed in a year.
+function loadTicked() {
+  if (!$('#claire li').length) return;
+  fetchAll('showCompleted=true&showHidden=true&updatedMin=' + encodeURIComponent(new Date(Date.now() - 365 * 864e5).toISOString()), function(tasks) {
+    if (tasksLoaded) placeTicked(tasks);
+  });
 }
 
 function refreshRows() {
@@ -347,6 +391,7 @@ function reload() {
       if ($.inArray(this.id, open) >= 0) row.addClass('open');
       if (id && this.id === id) row.find(field).setCursorPosition(start || 0);
     });
+    loadTicked();
   });
 }
 
@@ -378,9 +423,7 @@ function loadDone() {
   var since = days ? '&updatedMin=' + encodeURIComponent(new Date(Date.now() - days * 864e5).toISOString()) : '';
   fetchAll('showCompleted=true&showHidden=true' + since, function(tasks) {
     doneShown++;
-    doneWaiting = inDoneOrder($.grep(tasks, function(task) {
-      return task.status === 'completed' && !document.getElementById(task.id) && !isRemoved(task.id);
-    }));
+    doneWaiting = inDoneOrder(placeTicked(tasks));
     loadDone();
   }, function(status) {
     $('#done-more').prop('disabled', false).text('Try again').show();
@@ -453,31 +496,41 @@ function sortDone() {
   refreshRows();
 }
 
-// Tick or untick. The row moves between the lists once Google agrees.
-function setCompleted(checkbox) {
+// Tick or untick. The row moves between the lists once Google agrees, except that
+// a ticked subtask stays with its open parent.
+function setCompleted(checkbox, after) {
   var todo = checkbox.siblings('.todo');
   var row = todo.parent();
   var done = checkbox.prop('checked');
   var id = todo.attr('id');
   todo.toggleClass('checked', done);
   if (!id) return; // saveTask sends it once the task exists
-  var subtasks = done ? subtaskRows(todo).children('.todo').get() : [];
   api('PATCH', '/' + id, done ? { status: 'completed' } : { status: 'needsAction', completed: null }, function(result) {
     if (checkbox.prop('checked') !== done) return; // changed again since
     todo[0].completedAt = done ? (result && result.completed) || new Date().toISOString() : undefined;
     if (todo[0].deleted) return;
-    row.removeClass('selected');
-    if (done) {
-      $('#done-list').prepend(row);
+    var here = row.parent().is('#claire');
+    if (here && (!done || openParent(todo).length)) {
+      refreshRows();
+      if (done) offerUntick(checkbox, []);
+    } else if (done) {
+      var subtasks = subtaskRows(todo).children('.todo');
+      row.removeClass('selected');
+      $('#done-list').prepend(row, subtasks.filter('.checked').parent().removeClass('selected'));
       sortDone();
-      if (subtasks.length) followSubtasks(checkbox, subtasks);
+      var open = subtasks.not('.checked').get();
+      if (open.length) followSubtasks(checkbox, open);
+      else offerUntick(checkbox, []);
     } else {
-      $('#claire').prepend(row.removeClass('subtask'));
-      sortDone(); // its subtasks may no longer have a parent there
+      var along = subtaskRows(todo);
+      row.removeClass('selected');
+      if (openParent(todo).length) placeSubtask(todo);
+      else $('#claire').prepend(row.removeClass('subtask'), along.addClass('subtask'));
+      sortDone();
       reload(); // puts it back in its place
     }
     renderMeta(row);
-    if (done && !subtasks.length) offerUntick(checkbox, []);
+    if (after) after();
   }, function(status) {
     checkbox.prop('checked', !done);
     todo.toggleClass('checked', !done);
@@ -489,9 +542,12 @@ function offerUntick(checkbox, subtasks) {
   if (removals.length) return; // keep the undo for a delete
   var count = subtasks.length;
   showMessage('Task ' + (count ? 'and ' + count + ' subtask' + (count > 1 ? 's ' : ' ') : '') + 'completed.', 'Undo', function() {
-    $.each([checkbox[0]].concat(subtasks), function(i, box) {
-      $(box).prop('checked', false);
-      setCompleted($(box));
+    checkbox.prop('checked', false);
+    setCompleted(checkbox, function() { // then its subtasks, which come back with it
+      $.each(subtasks, function(i, box) {
+        $(box).prop('checked', false);
+        setCompleted($(box));
+      });
     });
   }, 7000);
 }
@@ -552,6 +608,7 @@ function taskRow(task) {
   );
   if (task.id) todo.attr('id', task.id);
   todo[0].parentTask = task.parent;
+  todo[0].position = task.position;
   todo[0].completedAt = done ? doneDate(task) : undefined;
   todo[0].saved = { title: todo.val(), notes: notes.val(), due: due.val() };
   todo[0].lastTitle = todo.val();
@@ -591,6 +648,7 @@ function renderMeta(row) {
   row.find('.when').text(when).toggleClass('overdue', !!overdue);
   row.find('.preview').text(values.notes.split('\n')[0]);
   row.children('.meta').toggle(!!(when || values.notes));
+  row.children('.handle').toggleClass('off', row.children('.todo').hasClass('checked'));
 }
 
 function subtaskRows(todo) {
@@ -645,7 +703,7 @@ function siblingAbove(todo, matches) {
 
 // Where to create a task: after the sibling above it, or first.
 function placement(todo) {
-  var above = siblingAbove(todo, function(el) { return el.id; });
+  var above = siblingAbove(todo, function(el) { return el.id && !$(el).hasClass('checked'); }); // Google hides ticked ones
   var parent = todo[0].parentTask;
   var query = [];
   if (above) query.push('previous=' + encodeURIComponent(above.id));
@@ -863,10 +921,10 @@ function family(row) {
 
 function moveRow(todo, how) {
   var row = todo.parent();
-  if (!row.parent().is('#claire')) return;
+  if (!row.parent().is('#claire') || todo.hasClass('checked')) return;
   var sub = row.hasClass('subtask');
   var caret = document.activeElement === todo[0] ? todo[0].selectionStart : null;
-  var other, above;
+  var other, above, moved = false;
   if (how === 'subtask') return addSubtask(todo);
   if (how === 'top') {
     other = sub ? row.prevUntil('li:not(.subtask)').last() : row.siblings().first();
@@ -880,13 +938,20 @@ function moveRow(todo, how) {
   } else if (how === 'indent' && !sub) {
     above = row.prev().children('.todo');
     if (!above.length) return;
-    if (family(row).length > 1) return showMessage('That task has subtasks, so it can\u2019t become one.', null, null, 4000);
+    if (family(row).length > 1) {
+      showMessage('That task has subtasks, so it can\u2019t become one.', null, null, 4000);
+      return true; // dealt with: don't move focus as well
+    }
     var parent = row.prev().hasClass('subtask') ? above[0].parentTask : above.attr('id');
-    if (parent) place(todo, row.next(), parent);
+    if (!parent) return;
+    place(todo, row.next(), parent);
+    moved = true;
   } else if (how === 'outdent' && sub) {
     place(todo, row.nextAll('li:not(.subtask)').first(), undefined);
+    moved = true;
   }
   if (caret !== null) todo.setCursorPosition(caret);
+  return moved;
 }
 
 function addSubtask(todo) {
