@@ -309,7 +309,7 @@ $(document).ready(function() {
 	}, true);
 	$('#done-toggle').click(toggleDone);
 	$('#done-more').click(loadDone);
-	$(window).on('resize', autosizeAll);
+	$(window).on('resize', autosizeAll).on('scroll resize', loadMoreIfNear);
 
 	updateToDoCount();
 	checkAuth();

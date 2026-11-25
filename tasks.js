@@ -208,6 +208,7 @@ function anyUnsaved() {
 
 function clearTasks() {
   undoStack = [];
+  ticking = 0;
   flush(); // finishes any deletes
   session++;
   moves = [];
@@ -397,7 +398,7 @@ function reload() {
 }
 
 function busy() {
-  return removals.length > 0 || moves.length > 0 || $('#claire .todo').filter(function() {
+  return removals.length > 0 || moves.length > 0 || ticking > 0 || $('#claire .todo').filter(function() {
     return !this.id || this.saving || isUnsaved($(this));
   }).length > 0;
 }
@@ -414,6 +415,7 @@ function toggleDone() {
   $('#done-toggle').attr('aria-expanded', String(open));
   if (open && !doneShown) loadDone();
   refreshRows();
+  loadMoreIfNear();
 }
 
 function loadDone() {
@@ -468,6 +470,17 @@ function showDone() {
   $('#done-more').prop('disabled', false).text('Load more').toggle(more);
   sortDone();
   $('#done-none').toggle(!$('#done-list li').length);
+  setTimeout(loadMoreIfNear, 0);
+}
+
+// Load more when the end of the list is near the bottom of the window.
+var autoDone = true;
+
+function loadMoreIfNear() {
+  var more = $('#done-more');
+  if (!autoDone || !$('#done').hasClass('open') || !doneShown || !more.is(':visible')) return;
+  if (more.prop('disabled') || more.text() === 'Try again') return;
+  if (more[0].getBoundingClientRect().top < window.innerHeight + 300) loadDone();
 }
 
 // The total is only known once everything has been loaded.
@@ -499,14 +512,19 @@ function sortDone() {
 
 // Tick or untick. The row moves between the lists once Google agrees, except that
 // a ticked subtask stays with its open parent.
-function setCompleted(checkbox, after, quiet) {
+var ticking = 0; // ticks Google hasn't answered yet
+
+function setCompleted(checkbox, after, quiet, failed) {
   var todo = checkbox.siblings('.todo');
   var row = todo.parent();
   var done = checkbox.prop('checked');
   var id = todo.attr('id');
+  if (!done && id && todo[0].parentTask && row.parent().is('#done-list')) return reopenParent(checkbox, after, quiet);
   todo.toggleClass('checked', done);
   if (!id) return; // saveTask sends it once the task exists
+  ticking++;
   api('PATCH', '/' + id, done ? { status: 'completed' } : { status: 'needsAction', completed: null }, function(result) {
+    ticking--;
     if (checkbox.prop('checked') !== done) return; // changed again since
     todo[0].completedAt = done ? (result && result.completed) || new Date().toISOString() : undefined;
     if (todo[0].deleted) return;
@@ -528,16 +546,59 @@ function setCompleted(checkbox, after, quiet) {
       if (openParent(todo).length) placeSubtask(todo);
       else $('#claire').prepend(row.removeClass('subtask'), along.addClass('subtask'));
       sortDone();
-      reload(); // puts it back in its place
     }
     renderMeta(row);
     if (!done && !quiet) canUndo(function() { return live(todo).length && !live(todo).hasClass('checked'); }, function() { undoTick([todo], true); });
     if (after) after();
+    if (!here && !done) reload(); // puts it back in its place, unless more are on the way
   }, function(status) {
+    ticking--;
     checkbox.prop('checked', !done);
     todo.toggleClass('checked', !done);
     showFailure('Could not update that task.', status);
+    if (failed) failed();
   });
+}
+
+// Unticking a completed subtask reopens its parent too. The others come back with
+// it, still ticked. The parent goes first: Google shouldn't see an open subtask
+// under a completed task.
+function reopenParent(checkbox, after, quiet) {
+  var todo = checkbox.siblings('.todo'), id = todo[0].parentTask;
+  var parent = $('#done-list .todo').filter(function() { return this.id === id; });
+  function undo() { // the subtask first, then its parent
+    var sub = live(todo).siblings('input[type=checkbox]'), top = live(parent).siblings('input[type=checkbox]');
+    setCompleted(sub.prop('checked', true), function() {
+      if (top.length) setCompleted(top.prop('checked', true), null, true);
+    }, true);
+  }
+  function subtask() {
+    untick(function() {
+      if (!quiet) canUndo(function() { return live(todo).length && !live(todo).hasClass('checked'); }, undo);
+      if (after) after();
+      reload();
+    });
+  }
+  function untick(then) {
+    var was = todo[0].parentTask, list = todo.closest('ul');
+    if (list.is('#done-list')) todo[0].parentTask = undefined; // its parent isn't on screen
+    setCompleted(checkbox, then, true);
+    todo[0].parentTask = was;
+  }
+  function back() {
+    checkbox.prop('checked', true);
+  }
+  if (parent.length) return setCompleted(parent.siblings('input[type=checkbox]').prop('checked', false), subtask, true, back);
+  api('GET', '/' + id, null, function(task) {
+    if (!task || task.status !== 'completed') return subtask();
+    api('PATCH', '/' + id, { status: 'needsAction', completed: null }, function() {
+      doneWaiting = $.grep(doneWaiting, function(waiting) { return waiting.id !== id; });
+      subtask();
+    }, function(status) {
+      back();
+      showFailure('Could not update that task.', status);
+    });
+  }, subtask); // gone: reopen it on its own
 }
 
 function offerUntick(checkbox, subtasks, quiet) {
@@ -806,7 +867,7 @@ function undoTick(todos, done) {
   setCompleted($(boxes[0]), function() { // then its subtasks, which come back with it
     $.each(boxes.slice(1), function(i, box) {
       $(box).prop('checked', done);
-      setCompleted($(box), null, true);
+      setCompleted($(box), reload, true);
     });
   }, true);
 }

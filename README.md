@@ -9,7 +9,7 @@ server or build step. Not made or endorsed by Google.
 - **Add a task** adds one at the top. It is saved once it has a title.
 - **Typing** in a row edits its title, and saves shortly after you stop.
 - **The circle** completes a task, or reopens it. A completed subtask stays under its
-  task until that is completed too.
+  task until that is completed too, and reopening it reopens that.
 - **The dots on the right** of a row open its menu: notes and due date, subtasks,
   moving and deleting.
 - **Delete** in the menu deletes a task and any subtasks, and moves on to the next.
@@ -18,6 +18,7 @@ server or build step. Not made or endorsed by Google.
 - **Drag the handle** to move a task: right to make it a subtask, left to move out.
 - **Tab** at the start of a task makes it a subtask, and **Shift+Tab** moves it out.
 - **Alt+up/down** moves a task. **Cmd/Ctrl+]** and **[** indent it from anywhere.
+- **Completed** tasks load as you scroll.
 - **Lists** are in the sidebar. Click a list's name above its tasks to rename it.
 
 **Cmd/Ctrl+Z** undoes completing, moving, indenting and splitting, and deleting and
