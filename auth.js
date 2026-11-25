@@ -6,7 +6,7 @@
 // done is called with true or false, and the reason if false.
 
 var SCOPE = 'https://www.googleapis.com/auth/tasks';
-var CLIENT_ID = '146982777170-h1btpb05ltctf58n4f9foqof665i08j7.apps.googleusercontent.com';
+var CLIENT_ID = '719894949389-8mfcps2du7nup1g0a14nfniul2fp812j.apps.googleusercontent.com';
 
 function extensionAuth() {
   var token = null;
