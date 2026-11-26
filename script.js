@@ -74,6 +74,45 @@ function dropBlanks() {
 	$('.claire .todo:not([id])').each(function() { dropIfBlank(this); });
 }
 
+// Several lines pasted into a task: the first goes where the caret is, and each of
+// the others becomes a task below, as if Enter had been pressed between them. List
+// markers such as "- ", "* " and "[ ] " are left out.
+function pasteLines(todo, text) {
+	var lines = $.map(text.split(/\r\n?|\n/), function(line) {
+		line = $.trim(line).replace(/^([-*\u2022]|\[[ xX]?\]|\d+[.)])\s+/, '');
+		return line ? line : null;
+	});
+	var el = todo[0];
+	if (lines.length < 2 || todo.closest('.done-list').length) { // one task, as before
+		lines = [lines.join(' ')];
+		el.setRangeText(lines.join(''), el.selectionStart, el.selectionEnd, 'end');
+		return todo.trigger('input');
+	}
+	var title = todo.val(), before = title.slice(0, el.selectionStart), rest = title.slice(el.selectionEnd);
+	var parent = subtaskRows(todo).length ? taskKey(el) : el.parentTask; // as Enter would
+	var at = todo.parent(), made = [];
+	todo.val(before + lines[0]);
+	$.each(lines.slice(1), function(i, line) {
+		var row = taskRow({ parent: parent }, el.card);
+		var added = row.children('.todo').val(line + (i === lines.length - 2 ? rest : ''));
+		at.after(row);
+		at = row;
+		made.push(added[0]);
+	});
+	refreshRows();
+	saveSoon(todo);
+	$.each(made, function(i, added) { saveSoon($(added)); });
+	var last = $(made[made.length - 1]);
+	last.setCursorPosition(last.val().length - rest.length);
+	canUndo(function() { return live(todo).length; }, function() {
+		setValues(todo, $.extend(current(todo), { title: title }));
+		saveTask(todo);
+		var still = $($.map(made, function(added) { return live($(added)).get(); }));
+		if (still.length) removeRow(still, 'Paste undone.');
+		todo.setCursorPosition(before.length);
+	});
+}
+
 // Split a row in two. If the task has subtasks, the new one is the first of them.
 function splitRow(todo) {
 	var position = todo[0].selectionStart, title = todo.val();
@@ -117,6 +156,19 @@ function keydown(event) {
 		tabbing = false; // moving the row focuses it again, which isn't reaching it by Tab
 		if (moveRow(todo, event.shiftKey ? 'outdent' : 'indent')) event.preventDefault();
 		else tabbing = pressed;
+		return;
+	}
+
+	// Cmd/Ctrl+Enter ticks the task, or reopens it, and goes on to the next one
+	if (code === 13 && command && !event.altKey && !event.shiftKey) {
+		event.preventDefault();
+		if (!el.id && !todo.val()) return;
+		var box = row.children('input[type=checkbox]');
+		var after = row.nextAll('li').not(subtaskRows(todo)).first();
+		if (!after.length) after = row.prevAll('li').first();
+		box.prop('checked', !box.prop('checked')).trigger('change');
+		var go = after.children('.todo');
+		if (go.length) go.setCursorPosition(go.val().length);
 		return;
 	}
 
@@ -273,6 +325,15 @@ function isPicked(row) {
 	return pickedRows().length > 1 && row.hasClass('picked');
 }
 
+// Tick all of them, or reopen them if they are all ticked already
+function tickPicked() {
+	var rows = pickedRows(), todos = pickedTops();
+	var after = rows.last().nextAll('li').not(rows).first();
+	var done = !todos.toArray().every(function(el) { return $(el).hasClass('checked'); });
+	stopPicking(after.length ? after : null, 'end');
+	tickAll(todos, done);
+}
+
 function deletePicked() {
 	var todos = pickedRows().children('.todo');
 	picked = null; // deleting moves on to the next row
@@ -298,6 +359,7 @@ function pickingKey(event) {
 	else if (code === 9 && !command && !event.altKey) indentPicked(event.shiftKey ? 'outdent' : 'indent');
 	else if (command && !event.altKey && (code === 221 || code === 219)) indentPicked(code === 221 ? 'indent' : 'outdent');
 	else if ((code === 8 || code === 46) && !command && !event.altKey) deletePicked();
+	else if (code === 13 && command && !event.altKey) tickPicked();
 	else if (code === 38) stopPicking(rows.first(), 'start');
 	else if (code === 40) stopPicking(rows.last(), 'end');
 	else stopPicking(head, 'end');
@@ -521,9 +583,8 @@ $(document).ready(function() {
 			var data = event.originalEvent && event.originalEvent.clipboardData;
 			var pasted = data && data.getData('text');
 			if (!pasted || !/[\r\n]/.test(pasted)) return;
-			event.preventDefault(); // a task is one line, unless Google already had more
-			this.setRangeText(pasted.trim().replace(/\s*[\r\n]+\s*/g, ' '), this.selectionStart, this.selectionEnd, 'end');
-			$(this).trigger('input');
+			event.preventDefault(); // a task is one line
+			pasteLines($(this), pasted);
 		})
 		.on('input', '.todo, .notes, .due', function() { typed = true; })
 		.on('input change', '.todo, .notes, .due', function() {
@@ -654,6 +715,18 @@ $(document).ready(function() {
 	document.addEventListener('keydown', pickingKey);
 	document.addEventListener('copy', copyPicked);
 	document.addEventListener('cut', copyPicked);
+
+	// Back after a while, from another tab or window: show what changed meanwhile
+	var away = 0;
+	function left() { away = away || Date.now(); }
+	function back() {
+		if (document.hidden || !away) return;
+		var gone = Date.now() - away;
+		away = 0;
+		if (gone > 3000) refreshAll();
+	}
+	document.addEventListener('visibilitychange', function() { if (document.hidden) left(); else back(); });
+	$(window).on('blur', left).on('focus', back);
 
 	// Was focus moved here by the Tab key? Any other key or a click says no.
 	document.addEventListener('keydown', function(event) {

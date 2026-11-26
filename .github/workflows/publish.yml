@@ -50,6 +50,15 @@ jobs:
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
 
+      - uses: actions/setup-node@v4
+        if: github.event_name == 'push'
+        with:
+          node-version: 24
+
+      - name: Run the tests first
+        if: github.event_name == 'push'
+        run: node tests/app.test.mjs
+
       - name: Build the store package
         if: github.event_name == 'push'
         run: python3 tools/build-store.py tab-and-tick.zip

@@ -15,6 +15,10 @@ server or build step. Not made or endorsed by Google.
 - **The dots on the right** of a row open its menu: notes and due date, subtasks,
   moving and deleting.
 - **Delete** in the menu deletes a task and any subtasks, and moves on to the next.
+- **Cmd/Ctrl+Enter** ticks a task, or reopens it, and moves on to the next. With
+  several tasks picked, it ticks them all.
+- **Pasting several lines** makes a task of each.
+- **Coming back** to the tab after a while shows any changes made elsewhere.
 - **Enter** splits a row in two. **Backspace** at the start joins it to the row
   above, and **Delete** at the end joins the next one to it.
 - **Drag the handle** to move a task: right to make it a subtask, left to move out.
@@ -67,6 +71,14 @@ The store package is made by `tools/build-store.py`. To work on it locally:
    fixes that ID as `jaanjobpenabcgjkjehbplfcgadikbbm`.
 
 After changing a file, press reload on `chrome://extensions`.
+
+## Tests
+
+    node tests/app.test.mjs
+
+It runs the app in headless Chrome (Node 22 or later), pressing keys and clicking as a
+person would, against a small fake of Google Tasks that refuses what the real one
+refuses. GitHub runs it on every push, and before publishing.
 
 ## Releasing
 

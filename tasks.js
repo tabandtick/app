@@ -362,6 +362,43 @@ function deleteList(id) {
   });
 }
 
+// Back to the tab after a while: show what changed in other tabs or on other
+// devices. Lists that are being edited or saved are left until next time.
+function refreshAll() {
+  if (!tasksLoaded || !signedIn()) return;
+  var started = session;
+  send('GET', 'users/@me/lists?maxResults=100', null, function(result) {
+    if (started !== session) return;
+    var fresh = (result && result.items) || [];
+    var same = fresh.length === lists.length && fresh.every(function(list, i) { return list.id === lists[i].id && list.title === lists[i].title; });
+    if (!same) {
+      lists = fresh;
+      showLists();
+    }
+  });
+  $('#cards .card').each(function() {
+    if (this.loaded) reload($(this));
+  });
+}
+
+// Tick tasks, or untick them, as one: one message, and one undo.
+function tickAll(todos, done) {
+  todos = todos.filter(function() { return this.id || this.value; }); // not a blank new row
+  if (!todos.length) return;
+  todos.each(function() {
+    var box = $(this).siblings('input[type=checkbox]');
+    if (box.prop('checked') === done) return;
+    box.prop('checked', done);
+    setCompleted(box, null, true);
+  });
+  var list = todos.get();
+  function can() { return list.some(function(el) { return live($(el)).hasClass('checked') === done; }); }
+  function undo() { tickAll($($.map(list, function(el) { return live($(el)).get(); })), !done); }
+  canUndo(can, undo);
+  if (removals.length) return; // keep the button for a delete
+  showMessage((list.length > 1 ? list.length + ' tasks ' : 'Task ') + (done ? 'completed.' : 'reopened.'), 'Undo', function() { if (can()) undo(); }, 7000);
+}
+
 function logOut() {
   settle('Log out anyway', endSession);
 }
