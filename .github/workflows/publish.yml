@@ -57,7 +57,7 @@ jobs:
 
       - name: Run the tests first
         if: github.event_name == 'push'
-        run: node tests/app.test.mjs
+        run: node tests/app.test.mjs && node tests/shared.test.mjs
 
       - name: Build the store package
         if: github.event_name == 'push'

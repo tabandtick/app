@@ -43,6 +43,8 @@
       <h2><button type="button" id="lists-toggle" aria-expanded="true" aria-controls="lists">Lists<svg class="chevron" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M5.500 12.500L10 8l4.500 4.500" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button></h2>
       <ul id="lists"></ul>
       <button type="button" id="new-list"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Create new list</button>
+      <button type="button" id="new-shared" class="share-only"><svg class="icon" width="24" height="24" viewBox="0 0 20 20" aria-hidden="true"><circle cx="7.5" cy="7" r="3" fill="currentColor"/><path d="M1.5 16.5c.6-3 3-4.6 6-4.6s5.4 1.6 6 4.6z" fill="currentColor"/><path d="M15 6v7M11.5 9.5h7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Create shared list</button>
+      <button type="button" id="open-shared" class="share-only">Open a list shared with you</button>
     </nav>
 
     <main>
@@ -58,8 +60,10 @@
       <section class="card">
         <div class="card-head">
           <input type="text" class="list-title" aria-label="List name" maxlength="1024" spellcheck="false">
+          <button type="button" class="share share-only" aria-label="Share">Share</button>
           <button type="button" class="more" aria-label="List options" aria-haspopup="true" aria-expanded="false">&#8942;</button>
           <div class="menu" role="menu">
+            <button type="button" role="menuitem" data-list-do="share" class="share-only">Share&hellip;</button>
             <button type="button" role="menuitem" data-list-do="rename">Rename</button>
             <button type="button" role="menuitem" data-list-do="hide">Hide</button>
             <button type="button" role="menuitem" data-list-do="delete">Delete list</button>
@@ -113,6 +117,22 @@
       </form>
     </dialog>
 
+    <dialog id="share" aria-labelledby="share-title">
+      <form>
+        <h2 id="share-title"></h2>
+        <p>People you add can see and change this list in Tab &amp; Tick. Google Drive emails them a link to it.</p>
+        <div class="share-add">
+          <input type="email" placeholder="Their Google account’s email" aria-label="Email" autocomplete="off" spellcheck="false">
+          <button type="submit">Share</button>
+        </div>
+        <ul class="people" aria-label="People with access"></ul>
+        <div class="buttons">
+          <button type="button" class="copy-link">Copy link</button>
+          <button type="button" class="close">Done</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="shortcuts" aria-labelledby="shortcuts-title">
       <h2 id="shortcuts-title">Keyboard shortcuts</h2>
       <div class="shortcut-groups"></div>
@@ -135,5 +155,6 @@
     <script src="auth.js"></script>
     <script src="script.js"></script>
     <script src="tasks.js"></script>
+    <script src="shared.js"></script>
   </body>
 </html>

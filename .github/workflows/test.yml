@@ -1,4 +1,4 @@
-# Runs tests/app.test.mjs, in headless Chrome, on every push and pull request.
+# Runs the tests in tests/, in headless Chrome, on every push and pull request.
 name: Tests
 
 on:
@@ -18,4 +18,4 @@ jobs:
         with:
           node-version: 24
       - name: Run the tests
-        run: node tests/app.test.mjs
+        run: node tests/app.test.mjs && node tests/shared.test.mjs

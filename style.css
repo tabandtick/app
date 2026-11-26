@@ -470,6 +470,135 @@ ul.list li.no-match {
   background: var(--hover);
 }
 
+/* ---- Shared lists, only where they can be used */
+
+body:not(.can-share) .share-only {
+  display: none !important;
+}
+
+#new-shared {
+  display: flex;
+  align-items: center;
+  gap: 17px;
+  width: 100%;
+  padding: 12px 8px 12px 5px;
+  border-radius: 8px;
+  line-height: 24px;
+  text-align: left;
+}
+
+#open-shared {
+  width: 100%;
+  padding: 8px 8px 8px 46px;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: left;
+}
+
+#new-shared:hover,
+#open-shared:hover {
+  background: var(--hover);
+}
+
+.shared-icon {
+  flex: none;
+  color: var(--muted);
+}
+
+/* On a shared list, a Share button by its name */
+.card-head .share {
+  padding: 6px 14px;
+  border-radius: 18px;
+  background: var(--tint);
+  color: var(--on-tint);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.card:not(.shared) .card-head .share {
+  display: none;
+}
+
+.card-head .share:hover {
+  box-shadow: 0 1px 3px var(--shadow);
+}
+
+#share {
+  width: min(440px, calc(100vw - 32px));
+}
+
+.share-add {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.share-add input {
+  flex: 1;
+  min-width: 0;
+}
+
+.share-add button {
+  padding: 8px 16px;
+  border-radius: 20px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.share-add button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.people {
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.people li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 4px 0;
+}
+
+.people .who {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.people .name,
+.people .email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.people .email,
+.people .role,
+.people .loading {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.people .unshare {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 20px;
+}
+
+.people .unshare:hover {
+  background: var(--hover);
+}
+
 /* ---- The list */
 
 main {

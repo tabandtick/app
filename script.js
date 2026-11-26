@@ -810,9 +810,12 @@ $(document).ready(function() {
 	}).on('click', '[data-list-do]', function() {
 		var card = $(this).closest('.card'), how = $(this).attr('data-list-do');
 		closeMenu();
-		if (how === 'rename') card.find('.list-title').focus().select();
+		if (how === 'share') shareList(card[0].list);
+		else if (how === 'rename') card.find('.list-title').focus().select();
 		else if (how === 'hide') showList(card[0].list, false);
 		else deleteList(card[0].list);
+	}).on('click', '.card-head .share', function() {
+		shareList($(this).closest('.card')[0].list);
 	}).on('click', '.new-task, .empty-new', function() {
 		newTask($(this).closest('.card'));
 	}).on('click', '.done-toggle', function() {
@@ -863,6 +866,8 @@ $(document).ready(function() {
 		newTask(currentCard());
 	});
 	$('#new-list').click(askNewList);
+	$('#new-shared').click(askSharedList);
+	$('#open-shared').click(pickShared);
 	$('#dialog .cancel').click(function() { $('#dialog')[0].close(); });
 	$('#shortcuts .close').click(function() { $('#shortcuts')[0].close(); });
 	var searchTimer;

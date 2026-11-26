@@ -95,6 +95,13 @@ function shouldRetry(method, answer) {
 // and it waits its turn when there have been too many requests.
 function send(method, path, body, done, failed, again, tries) {
   var started = session;
+  if (/^(users\/@me\/)?lists\/drive%3A/.test(path)) { // a shared list, kept in Drive
+    return shared.request(method, path, body, function(result) {
+      if (started === session && done) done(result);
+    }, function(status) {
+      if (started === session && failed) failed(status);
+    });
+  }
   var options = { method: method, headers: { 'Authorization': 'Bearer ' + auth.token() } };
   if (body) {
     options.headers['Content-Type'] = 'application/json';
@@ -188,13 +195,29 @@ function start() {
     tasksLoaded = true;
     lists = (result && result.items) || [];
     showStatus('');
-    $('body').addClass('signed-in');
+    $('body').addClass('signed-in').toggleClass('can-share', !!auth.canShare);
     showLists();
     loadProfile();
+    startShared();
     send('GET', 'users/@me/lists/@default', null, function(list) { defaultList = list.id; });
   }, function(status) {
     showLogIn();
     showMessage('Logged in, but your lists couldn’t be loaded (' + (status || 'no connection') + ').', 'Retry', checkAuth);
+  });
+}
+
+// Your shared lists go after your Google Tasks ones.
+function withShared(googleLists) {
+  return $.grep(googleLists, function(list) { return !list.shared; }).concat(shared.lists());
+}
+
+function startShared() {
+  var started = session;
+  shared.start(function() {
+    if (started !== session) return;
+    lists = withShared(lists);
+    showLists();
+    openLink();
   });
 }
 
@@ -212,6 +235,7 @@ function showLists() {
     return $('<li></li>').append($('<label></label>').append(
       $('<input type="checkbox"/>').prop('checked', !isHidden(list.id)).attr('data-list', list.id),
       $('<span class="name"></span>').text(list.title),
+      list.shared ? $(PEOPLE).attr('aria-label', 'Shared').attr('role', 'img') : null,
       $('<span class="count"></span>').text(list.count === undefined ? '' : list.count)
     ));
   }));
@@ -227,6 +251,8 @@ function showLists() {
     if (made || !card.is($('#cards').children().eq(i))) $('#cards').append(card);
     if (!card.find('.list-title').is(':focus')) card.find('.list-title').val(list.title);
     card.find('.claire').attr('aria-label', list.title);
+    card.toggleClass('shared', !!list.shared);
+    card.find('[data-list-do=delete]').text(list.shared && !list.owned ? 'Leave list' : 'Delete list');
     card.find('.done-list').attr('aria-label', 'Completed in ' + list.title);
     if (made) loadCard(card);
   });
@@ -287,7 +313,7 @@ function settle(anyway, done) {
 }
 
 function anyUnsaved() {
-  return moves.length > 0 || ticking > 0 || $('.todo').filter(function() { return this.saving || isUnsaved($(this)); }).length > 0;
+  return shared.unsaved() || moves.length > 0 || ticking > 0 || $('.todo').filter(function() { return this.saving || isUnsaved($(this)); }).length > 0;
 }
 
 function finishRemovals() {
@@ -334,6 +360,7 @@ function renameList(card, title) {
 // any tasks in it assigned from Docs or Chat, so don't.
 function deleteList(id) {
   var list = findList(id);
+  if (list && list.shared) return settle('Go on anyway', function() { finishRemovals(); shared.remove(id); });
   if (id === defaultList) return showMessage('Google doesn’t let your first list be deleted.', null, null, 5000);
   settle('Go on anyway', function() {
     finishRemovals();
@@ -364,6 +391,171 @@ function deleteList(id) {
   });
 }
 
+// ---- Sharing. Google Tasks can't share lists, so shared ones are kept in Google
+// Drive: see shared.js.
+
+var PEOPLE = '<svg class="shared-icon" width="18" height="18" viewBox="0 0 20 20"><circle cx="7.5" cy="7" r="3" fill="currentColor"/><path d="M1.5 16.5c.6-3 3-4.6 6-4.6s5.4 1.6 6 4.6z" fill="currentColor"/><circle cx="14" cy="7.5" r="2.4" fill="currentColor" opacity=".7"/><path d="M14.6 11.4c2 .3 3.5 1.8 3.9 4.1h-3.3c-.3-1.6-1-3-2.2-3.9.5-.1 1-.2 1.6-.2z" fill="currentColor" opacity=".7"/></svg>';
+
+// Drive's permission is asked for only when you first share, as it isn't needed
+// before. Google's window needs a click, which this is called from.
+function withDrive(then) {
+  if (auth.hasDrive()) return then();
+  auth.drive(function(ok, reason) {
+    if (!ok) return showMessage('Shared lists need Google Drive' + (reason ? ' (' + reason + ').' : '.'), null, null, 8000);
+    startShared();
+    then();
+  });
+}
+
+function askSharedList() {
+  withDrive(function() {
+    ask({ title: 'New shared list', text: 'Share it with anyone with a Google account. It’s kept in your Google Drive.', field: '', placeholder: 'Name', button: 'Create' }, function(title) {
+      shared.create(title, [], function(list) {
+        addShared(list);
+        shareList(list.id);
+      }, function(status) {
+        showFailure('Could not create that list.', status);
+      });
+    });
+  });
+}
+
+function addShared(list) {
+  if (!findList(list.id)) lists.push(list);
+  hiddenLists($.grep(hiddenLists(), function(other) { return other !== list.id; }));
+  showLists();
+}
+
+// A Google Tasks list can't be shared, so offer a shared copy of it.
+function offerCopy(id) {
+  var list = findList(id);
+  if (!list) return;
+  ask({
+    title: 'Share “' + list.title + '”?',
+    text: 'Google Tasks can’t share lists, so this makes a shared copy of it, with its open tasks, in your Google Drive. The original stays in Google Tasks.',
+    button: 'Make a shared copy'
+  }, function() {
+    withDrive(function() {
+      showMessage('Copying…');
+      shared.copy(list, function(copy) {
+        hideMessage();
+        addShared(copy);
+        shareList(copy.id);
+      }, function(status) {
+        showFailure('Could not copy that list.', status);
+      });
+    });
+  });
+}
+
+// Who has the list, a field to add someone, and its link.
+function shareList(id) {
+  var list = findList(id), dialog = $('#share'), field = dialog.find('input[type=email]'), people = dialog.find('.people');
+  if (!list) return;
+  if (!list.shared) return offerCopy(id);
+  closeMenu();
+  dialog.find('h2').text('Share “' + list.title + '”');
+  field.val('').prop('disabled', list.canShare === false);
+  dialog.find('.share-add button').prop('disabled', true);
+  function showPeople() {
+    people.empty().append($('<li class="loading"></li>').text('Loading…'));
+    shared.people(id, function(all) {
+      people.empty().append($.map(all, function(p) {
+        var row = $('<li></li>').append($('<span class="who"></span>').append(
+          $('<span class="name"></span>').text(p.name || p.email),
+          p.name && p.email ? $('<span class="email"></span>').text(p.email) : null));
+        if (p.role === 'owner') row.append($('<span class="role"></span>').text('Owner'));
+        else if (list.owned && p.type === 'user') row.append($('<button type="button" class="unshare"></button>').attr('aria-label', 'Stop sharing with ' + (p.name || p.email)).html('&times;').click(function() {
+          shared.uninvite(id, p.id, showPeople, function(status) { showFailure('Could not stop sharing with them.', status); });
+        }));
+        return row[0];
+      }));
+    }, function() {
+      people.empty();
+    });
+  }
+  field.off('input').on('input', function() {
+    dialog.find('.share-add button').prop('disabled', !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test($.trim(field.val())));
+  });
+  dialog.find('form').off('submit').on('submit', function(event) {
+    event.preventDefault();
+    var email = $.trim(field.val());
+    if (!email) return;
+    dialog.find('.share-add button').prop('disabled', true);
+    shared.invite(id, email, function() {
+      field.val('');
+      showPeople();
+      announce('Shared with ' + email + '.');
+    }, function(status) {
+      dialog.find('.share-add button').prop('disabled', false);
+      if (status === 400) showMessage('Could not share with ' + email + '. Check it’s a Google account.', null, null, 8000);
+      else showFailure('Could not share that list.', status);
+    });
+  });
+  dialog.find('.copy-link').off('click').on('click', function() {
+    var button = $(this);
+    navigator.clipboard.writeText(shared.link(id)).then(function() {
+      button.text('Link copied');
+      setTimeout(function() { button.text('Copy link'); }, 2000);
+    }, function() {
+      showMessage(shared.link(id), null, null, 15000);
+    });
+  });
+  dialog.find('.close').off('click').on('click', function() { dialog[0].close(); });
+  showPeople();
+  dialog[0].showModal();
+  if (!field.prop('disabled')) field.focus();
+}
+
+// A link to a shared list: tabandtick.github.io/app/#open=<its file>. Kept until
+// you're logged in, then opened.
+var linkToOpen = (function() {
+  var m = location.hash.match(/^#open=([\w-]+)$/);
+  if (!m) return null;
+  history.replaceState(null, '', location.pathname + location.search);
+  return m[1];
+})();
+
+function openLink() {
+  var id = linkToOpen;
+  if (!id || !tasksLoaded) return;
+  linkToOpen = null;
+  if (!auth.canShare) return showMessage('Shared lists open on the website: tabandtick.github.io/app', null, null, 10000);
+  var known = findList('drive:' + id);
+  if (known) return showOpened(known);
+  ask({ title: 'Open a shared list?', text: 'Someone shared a list with you. To open it, Tab & Tick asks Google for the files you open with it in Google Drive.', button: 'Open it' }, function() {
+    withDrive(function() { openShared(id); });
+  });
+}
+
+function openShared(id) {
+  shared.open(id, function(list) {
+    addShared(list);
+    showOpened(list);
+  }, function(status) {
+    if (status !== 404 && status !== 403) return showFailure('Could not open that list.', status);
+    // Drive lets an app open a file shared with you once you've picked it
+    shared.pick(id, function(picked) {
+      shared.open(picked, function(list) {
+        addShared(list);
+        showOpened(list);
+      }, function(status) { showFailure('Could not open that list.', status); });
+    });
+  });
+}
+
+function pickShared() {
+  withDrive(function() {
+    shared.pick(null, openShared);
+  });
+}
+
+function showOpened(list) {
+  var card = cardFor(list.id);
+  if (card.length) card[0].scrollIntoView({ block: 'nearest' });
+  showMessage('Opened “' + list.title + '”.', null, null, 4000);
+}
+
 // Back to the tab after a while: show what changed in other tabs or on other
 // devices. Lists that are being edited or saved are left until next time.
 function refreshAll() {
@@ -371,7 +563,7 @@ function refreshAll() {
   var started = session;
   send('GET', 'users/@me/lists?maxResults=100', null, function(result) {
     if (started !== session) return;
-    var fresh = (result && result.items) || [];
+    var fresh = withShared((result && result.items) || []);
     var same = fresh.length === lists.length && fresh.every(function(list, i) { return list.id === lists[i].id && list.title === lists[i].title; });
     if (!same) {
       lists = fresh;
@@ -381,6 +573,7 @@ function refreshAll() {
   $('#cards .card').each(function() {
     if (this.loaded) reload($(this));
   });
+  shared.check();
 }
 
 // Tick tasks, or untick them, as one: one message, and one undo.
@@ -411,6 +604,7 @@ function endSession() {
   flush(); // finishes any deletes
   session++;
   moves = [];
+  shared.reset();
   tasksLoaded = false;
   selected = $();
   picked = null;
@@ -565,9 +759,10 @@ function autosizeAll() {
   shown.each(function(i) { this.style.height = heights[i] + 'px'; });
 }
 
-// Show the list as Google now has it, unless that would lose something.
+// Show the list as Google now has it, unless that would lose something. Says
+// whether it went ahead.
 function reload(card) {
-  if (!signedIn() || busy() || !card[0].loaded) return;
+  if (!signedIn() || busy() || !card[0].loaded) return false;
   fetchAll(card[0].list, 'showCompleted=false', function(tasks) {
     if (busy() || !$.contains(document, card[0])) return;
     var active = $(document.activeElement), open = card.find('.claire');
@@ -582,6 +777,7 @@ function reload(card) {
     loadTicked(card);
     countDone(card);
   });
+  return true;
 }
 
 function busy() {
@@ -1482,6 +1678,7 @@ function moveToList(todos, id, previous) {
   var unmade = todos.filter(function() { return !this.id; });
   if (unmade.length) return showMessage(unmade.val() ? 'Still saving that task. Try again in a moment.' : 'Give that task a title first.', null, null, 4000);
   function call(source, what, target, after, done, failed) {
+    if (shared.isShared(source) || shared.isShared(target)) return shared.move(source, what, target, after, done, failed);
     send('POST', 'lists/' + encodeURIComponent(source) + '/tasks/' + encodeURIComponent(what) + '/move?destinationTasklist=' + encodeURIComponent(target) +
       (after ? '&previous=' + encodeURIComponent(after) : ''), null, done, failed);
   }
@@ -1549,8 +1746,10 @@ function flush() {
   if (!signedIn()) return;
   var headers = { 'Authorization': 'Bearer ' + auth.token(), 'Content-Type': 'application/json' };
   function url(el) { return API + 'lists/' + encodeURIComponent(el.card[0].list) + '/tasks'; }
+  function isSharedRow(el) { return el.card && shared.isShared(el.card[0].list); }
   $('.todo').each(function() {
     var el = this, todo = $(el), id = todo.attr('id'), sent = current(todo);
+    if (isSharedRow(el)) return saveTask(todo); // made in the page at once, and saved below
     if (!isUnsaved(todo) || (el.saving && !id)) return;
     clearTimeout(el.timer);
     el.saving = true;
@@ -1562,6 +1761,7 @@ function flush() {
   });
   $.each(moves.slice(1), function(i, todo) { // the first is already on its way
     var id = todo.attr('id');
+    if (isSharedRow(todo[0])) return;
     if (id && !todo[0].deleted) fetch(url(todo[0]) + '/' + id + '/move' + placement(todo), { method: 'POST', headers: headers, keepalive: true }).catch(function() {});
   });
   moves.length = Math.min(moves.length, 1);
@@ -1569,9 +1769,11 @@ function flush() {
     clearTimeout(r.timer);
     $(r.todos.get().reverse()).each(function() {
       this.gone = true;
+      if (isSharedRow(this)) return deleteTask($(this));
       if (this.id) fetch(url(this) + '/' + this.id, { method: 'DELETE', headers: headers, keepalive: true }).catch(function() {});
     });
   });
+  shared.flush();
   if (undoShown) hideMessage();
 }
 
