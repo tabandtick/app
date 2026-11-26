@@ -166,22 +166,12 @@ ul.list li.no-match {
   color: var(--muted);
 }
 
-#authorize-button {
-  height: 40px;
-  padding: 0 24px;
-  border-radius: 20px;
-}
-
 #authorize-button,
 .empty-new {
   padding: 8px 18px;
   background: var(--accent);
   color: #fff;
   font-weight: 600;
-}
-
-#authorize-button {
-  padding: 0 24px;
 }
 
 #authorize-button:hover,
