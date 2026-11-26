@@ -15,7 +15,7 @@ CLIENT_ID = '719894949389-d5vjqvhj7iv0du78j9ml0cf8s783niso.apps.googleuserconten
 
 ROOT = Path(__file__).resolve().parent.parent
 FILES = ['index.html', 'style.css', 'jquery.js', 'script.js', 'tasks.js',
-         'icons/logo.svg', 'icons/icon-16.png', 'icons/icon-32.png', 'icons/icon-48.png', 'icons/icon-128.png']
+         'icons/logo.svg', 'icons/LICENSE-material-symbols.txt', 'icons/icon-16.png', 'icons/icon-32.png', 'icons/icon-48.png', 'icons/icon-128.png']
 
 
 def extension_auth():
@@ -25,8 +25,8 @@ def extension_auth():
     text = text[:start] + 'var auth = extensionAuth();\n'
     text = re.sub(r"var CLIENT_ID = .*\n", '', text)
     text = re.sub(r"\A(?://.*\n)+", "// Signing in to Google, which Chrome does. done is called with true or false, and\n// the reason if false.\n", text)
-    text = re.sub(r"var SCOPE = .*\n", '', text)
-    assert end > start and 'accounts.google.com' not in text and 'webAuth' not in text
+    text = re.sub(r"(// Your name.*\n)?var SCOPES? = .*\n", '', text)
+    assert end > start and 'accounts.google.com' not in text and 'webAuth' not in text and 'SCOPE' not in text
     return text
 
 

@@ -6,6 +6,8 @@
 // done is called with true or false, and the reason if false.
 
 var SCOPE = 'https://www.googleapis.com/auth/tasks';
+// Your name, email and picture, for the account button
+var SCOPES = SCOPE + ' https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email';
 var CLIENT_ID = '719894949389-8mfcps2du7nup1g0a14nfniul2fp812j.apps.googleusercontent.com';
 
 function extensionAuth() {
@@ -77,7 +79,7 @@ function webAuth() {
     if (!ready) return waiting.push(function(blocked) { login(done, choose, blocked); });
     google.accounts.oauth2.initTokenClient({
       client_id: CLIENT_ID,
-      scope: SCOPE,
+      scope: SCOPES,
       callback: function(response) {
         if (response.error) return done(false, response.error);
         if (!google.accounts.oauth2.hasGrantedAllScopes(response, SCOPE)) return done(false, 'access to tasks wasn\u2019t ticked');

@@ -10,16 +10,24 @@ server or build step. Not made or endorsed by Google.
 - **Typing** in a row edits its title, and saves shortly after you stop.
 - **The circle** completes a task, or reopens it. A completed subtask stays under its
   task until that is completed too, and reopening it reopens that.
+- **Editing a task** shows its details under it: notes, and **Today**, **Tomorrow** or
+  any date as its due date. Elsewhere a line shows the date and the start of the notes.
 - **The dots on the right** of a row open its menu: notes and due date, subtasks,
   moving and deleting.
 - **Delete** in the menu deletes a task and any subtasks, and moves on to the next.
 - **Enter** splits a row in two. **Backspace** at the start joins it to the row
   above, and **Delete** at the end joins the next one to it.
 - **Drag the handle** to move a task: right to make it a subtask, left to move out.
-- **Tab** makes a task a subtask, and **Shift+Tab** moves it out.
+- **Tab** makes a task a subtask, along with any subtasks of its own, and **Shift+Tab**
+  moves it out, taking the subtasks below it as its own.
+- **Shift+up/down** or **Shift+click** picks several tasks in a row, and **Cmd/Ctrl+click**
+  adds or takes away one at a time. Then **Delete** or **Backspace** deletes them,
+  **Tab**, **Shift+Tab** and **Alt+up/down** move them, and **Cmd/Ctrl+C** copies their
+  titles. **Escape**, an arrow key or a click goes back to typing.
 - **Alt+up/down** moves a task. **Cmd/Ctrl+]** and **[** indent it from anywhere.
 - **Completed** tasks load as you scroll.
-- **Lists** appear side by side. Untick one in the sidebar to hide it. The menu on a
+- **Lists** appear side by side. Untick one in the sidebar to hide it, and the chevron by
+  Lists folds them away. **☰** hides the sidebar. The menu on a
   card renames, hides or deletes it, and a task's menu, or dragging, moves it to
   another list.
 
@@ -43,7 +51,7 @@ to delete anything once that time is up, or when the page closes.
 | `auth.js` | Signing in, as a website or as an extension |
 | `tasks.js` | Lists, tasks, and everything that talks to Google |
 | `script.js` | Buttons, keys, dragging and counts |
-| `manifest.json`, `icons/` | The Chrome extension |
+| `manifest.json`, `icons/` | The Chrome extension. The add-task icon is from Material Symbols, under the Apache License 2.0 in `icons/LICENSE-material-symbols.txt` |
 | `jquery.js` | jQuery 2.0.3 |
 
 ## The extension

@@ -1,29 +1,47 @@
+/* Google Tasks' colours (its Material 3 theme), with purple wherever it has blue:
+   the same lightness and strength, turned to Tab & Tick's hue. */
 :root {
-  --page: #f4f1ec;
-  --card: #fff;
-  --text: #26222e;
-  --muted: #6b6475;
-  --line: #ddd6e8;
-  --hover: #f5f1fc;
-  --tint: #efe9fb;
-  --accent: #6d4bd8;
+  --page: #f8fafd;              /* surface-container-low */
+  --card: #fff;                 /* surface */
+  --menu: #f0f4f9;              /* surface-container: menus and dialogs */
+  --raised: #dde3ea;            /* surface-container-highest: the Create button */
+  --text: #1f1f1f;              /* on-surface */
+  --muted: #444746;             /* on-surface-variant */
+  --line: #c4c7c5;              /* outline-variant */
+  --hover: rgba(31, 31, 31, 0.08);
+  --tint: #d2c2ff;              /* Google's #c2e7ff selected colour, in purple */
+  --on-tint: #0e0035;
+  --accent: #6d4bd8;            /* Google's #0b57d0, as Tab & Tick's own purple */
   --accent-dark: #5636bd;
+  --on-accent: #fff;
   --red: #b3261e;
+  --toast: #303030;             /* inverse-surface */
+  --on-toast: #f2f2f2;
+  --toast-action: #d2c2ff;
+  --shadow: rgba(0, 0, 0, 0.18);
   color-scheme: light dark;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --page: #16131c;
-    --card: #211d29;
-    --text: #eeeaf4;
-    --muted: #a79fb5;
-    --line: #3d364a;
-    --hover: #2a2534;
-    --tint: #2e2740;
-    --accent: #a48bf5;
-    --accent-dark: #b9a5f8;
-    --red: #ff9a90;
+    --page: #1b1b1b;
+    --card: #131314;
+    --menu: #1e1f20;
+    --raised: #333537;
+    --text: #e3e3e3;
+    --muted: #c4c7c5;
+    --line: #444746;
+    --hover: rgba(227, 227, 227, 0.08);
+    --tint: #2b185f;            /* Google's #004a77 */
+    --on-tint: #d8cef3;
+    --accent: #bea8fa;          /* Google's #a8c7fa */
+    --accent-dark: #d2c2ff;
+    --on-accent: #131314;
+    --red: #f2b8b5;
+    --toast: #e3e3e3;
+    --on-toast: #303030;
+    --toast-action: #6d4bd8;
+    --shadow: rgba(0, 0, 0, 0.5);
   }
 }
 
@@ -62,18 +80,19 @@ button:hover {
   outline-offset: 1px;
 }
 
+/* Sizes from here on follow Google Tasks' own, so the two feel the same */
 #header {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   height: 64px;
-  padding: 0 20px;
+  padding: 0 18px 0 20px;
 }
 
 h1 {
   margin: 0 auto 0 0;
-  font-size: 20px;
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 500;
 }
 
 #status {
@@ -96,25 +115,142 @@ h1 {
 @media (prefers-color-scheme: dark) {
   #authorize-button,
   .empty-new {
-    color: #16131c;
+    color: var(--on-accent);
   }
 }
 
-#log-out-button {
+/* Your picture, as in Google's own apps, with a menu to log out */
+#account {
   display: none;
-  padding: 8px 12px;
-  color: var(--muted);
+  position: relative;
 }
 
-.signed-in #log-out-button {
+.signed-in #account {
   display: block;
 }
 
+#account-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--card);
+  font-weight: 600;
+}
+
+#account-button:hover,
+#account.menu-open #account-button {
+  box-shadow: 0 0 0 3px var(--line);
+}
+
+#avatar {
+  grid-area: 1 / 1;
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+}
+
+#initial,
+#person {
+  grid-area: 1 / 1;
+}
+
+#avatar:not([hidden]) ~ #initial,
+#avatar:not([hidden]) ~ #person,
+#initial:not(:empty) + #person {
+  visibility: hidden;
+}
+
+#account .menu {
+  top: 44px;
+  right: 0;
+  width: 240px;
+}
+
+#account.menu-open .menu {
+  display: block;
+}
+
+#account-name,
+#account-email {
+  margin: 0;
+  padding: 0 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#account-name {
+  padding-top: 6px;
+  font-weight: 600;
+}
+
+#account-email {
+  padding-bottom: 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+#account-name:not(:empty) ~ #log-out-button,
+#account-email:not(:empty) ~ #log-out-button {
+  border-top: 1px solid var(--line);
+}
+
+/* Hides and shows the lists, as Google Tasks' main menu button does */
 #side-toggle {
   display: none;
-  width: 40px;
-  height: 40px;
-  font-size: 20px;
+  flex: none;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin: 0 -4px 0 -8px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--text);
+}
+
+.signed-in #side-toggle {
+  display: grid;
+}
+
+#side-toggle:hover {
+  background: var(--hover);
+}
+
+/* On a wide screen the lists slide away to the left, and the cards widen into the space */
+@media (min-width: 961px) {
+  :root {
+    --slide: 0.25s cubic-bezier(0.4, 0, 0.2, 1); /* as Google Tasks' own */
+  }
+
+  #side {
+    transition: transform var(--slide), visibility 0s;
+  }
+
+  .signed-in main {
+    transition: margin-left var(--slide);
+  }
+
+  .side-closed #side {
+    transform: translateX(-100%);
+    visibility: hidden; /* once it has gone, so Tab skips it */
+    transition: transform var(--slide), visibility 0s 0.25s;
+  }
+
+  .side-closed.signed-in main {
+    margin-left: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #side,
+  .signed-in main {
+    transition: none !important;
+  }
 }
 
 /* ---- Lists */
@@ -122,10 +258,11 @@ h1 {
 #side {
   display: none;
   position: absolute;
-  top: 72px;
+  top: 64px;
   left: 0;
-  width: 240px;
-  padding: 0 12px;
+  width: 256px;
+  padding: 12px 16px 0;
+  font-size: 14px;
 }
 
 .signed-in #side {
@@ -133,10 +270,37 @@ h1 {
 }
 
 #side h2 {
-  margin: 0 12px 6px;
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+#lists-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 16px; /* our font is narrower than Google's, so this matches its 14px */
+  line-height: 20px;
+}
+
+#lists-toggle:hover {
+  background: var(--hover);
+}
+
+#lists-toggle .chevron {
   color: var(--muted);
-  font-size: 13px;
-  font-weight: 600;
+  transition: transform 0.2s;
+}
+
+.lists-folded #lists-toggle .chevron {
+  transform: rotate(180deg);
+}
+
+.lists-folded #lists {
+  display: none;
 }
 
 #lists {
@@ -148,8 +312,9 @@ h1 {
 #lists label {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 12px;
+  gap: 20px;
+  padding: 6px 12px 6px 8px;
+  line-height: 20px;
   border-radius: 8px;
   cursor: pointer;
 }
@@ -160,10 +325,10 @@ h1 {
 
 #lists input {
   flex: none;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   margin: 0;
-  accent-color: var(--accent);
+  accent-color: var(--text); /* as Google's, not its blue */
 }
 
 #lists .name {
@@ -177,76 +342,86 @@ h1 {
   color: var(--muted);
 }
 
+/* As Google Tasks' Create button: filled, raised a little, a plus and the words */
 #create {
-  margin: 0 0 18px;
-  padding: 12px 20px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--card);
-  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 56px;
+  margin: 0 0 24px;
+  padding: 0 20px 0 16px;
+  border-radius: 16px;
+  background: var(--raised);
+  font-weight: 500;
+  box-shadow: 0 1px 3px var(--shadow);
 }
 
 #create:hover {
-  background: var(--tint);
+  box-shadow: 0 2px 8px var(--shadow);
 }
 
-#create span,
-#new-list span,
+#create .icon {
+  color: var(--accent);
+}
+
 .new-task span {
   color: var(--accent);
   font-weight: 600;
 }
 
-#create span {
-  margin-right: 8px;
-  font-size: 18px;
-}
-
-#all-lists,
+/* The plus sits where the lists' tick boxes are, and the words where their names are */
 #new-list {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 17px;
   width: 100%;
-  padding: 8px 12px;
+  margin-top: 8px;
+  padding: 12px 8px 12px 5px;
+  border-radius: 8px;
+  line-height: 24px;
   text-align: left;
 }
 
-#all-lists {
-  margin-bottom: 16px;
-}
-
-#all-lists[aria-current] {
-  background: var(--tint);
-  font-weight: 600;
-}
-
-#new-list {
-  margin-top: 4px;
-  color: var(--accent);
+#new-list:hover {
+  background: var(--hover);
 }
 
 /* ---- The list */
 
 main {
-  margin: 8px auto 100px;
+  margin: 0 auto 100px;
   padding: 0 16px;
 }
 
 .signed-in main {
-  margin-left: 264px;
+  margin-left: 258px;
 }
 
 #cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 372px), 1fr));
+  gap: 8px;
   align-items: start;
+}
+
+/* Side by side, sharing the width, at least 372px each; more scroll sideways */
+@media (min-width: 961px) {
+  #cards {
+    display: flex;
+    align-items: flex-start;
+  }
+
+  .card {
+    flex: 1 1 0;
+    min-width: 372px;
+  }
 }
 
 .card {
   max-width: 720px;
   min-width: 0;
-  padding: 16px 0 10px;
-  border: 1px solid var(--line);
+  padding: 8px 0 10px;
+  border: 1px solid transparent; /* as Google's: set apart by colour alone */
   border-radius: 16px;
   background: var(--card);
 }
@@ -301,7 +476,8 @@ main {
   position: relative;
   align-items: center;
   gap: 8px;
-  padding: 0 12px 4px 16px;
+  min-height: 40px;
+  padding: 0 8px 4px;
 }
 
 .card-head .more {
@@ -323,8 +499,8 @@ main {
   border: 1px solid transparent;
   border-radius: 8px;
   background: none;
-  font-size: 20px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 400;
 }
 
 .list-title:hover,
@@ -332,12 +508,28 @@ main {
   border-color: var(--line);
 }
 
+/* The whole width of the card, as a pill, as in Google Tasks */
 .new-task {
   display: block;
-  margin: 0 16px 6px;
-  padding: 8px 10px;
+  width: calc(100% - 16px);
+  margin: 0 8px 4px;
+  padding: 6px 12px 6px 8px;
+  border-radius: 20px;
   color: var(--accent);
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  text-align: left;
+}
+
+.new-task span {
+  display: inline-block;
+  width: 36px;
+  padding-left: 4px; /* over the tick circles */
+}
+
+.new-task .icon {
+  vertical-align: -5px;
 }
 
 ul.list {
@@ -351,7 +543,7 @@ ul.list li {
   position: relative;
   flex-wrap: wrap;
   align-items: flex-start;
-  padding: 7px 12px 7px 4px;
+  padding: 4px 12px 4px 0;
   border-left: 4px solid transparent;
 }
 
@@ -364,13 +556,22 @@ ul.list li.selected {
   border-left-color: var(--accent);
 }
 
+ul.list li.picked {
+  background: var(--tint);
+  border-left-color: var(--accent);
+}
+
+ul.list:focus {
+  outline: none;
+}
+
 ul.list li.subtask {
-  padding-left: 40px;
+  padding-left: 34px;
 }
 
 .handle {
   flex: none;
-  width: 20px;
+  width: 16px;
   color: var(--muted);
   font-size: 16px;
   line-height: 24px;
@@ -398,18 +599,13 @@ ul.list input[type='checkbox'] {
   flex: none;
   width: 20px;
   height: 20px;
-  margin: 2px 12px 0 4px;
+  margin: 2px 8px 0 0;
   border: 2px solid var(--muted);
   border-radius: 50%;
   background: none center / 14px no-repeat;
   cursor: pointer;
-  visibility: hidden;
   -webkit-appearance: none;
   appearance: none;
-}
-
-ul.list li.unhide input[type='checkbox'] {
-  visibility: visible;
 }
 
 ul.list input[type='checkbox']:hover {
@@ -417,9 +613,15 @@ ul.list input[type='checkbox']:hover {
 }
 
 ul.list input[type='checkbox']:checked {
-  border-color: #6d4bd8;
-  background-color: #6d4bd8;
+  border-color: var(--accent);
+  background-color: var(--accent);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 7.500l2.700 2.700L11 4.500'/%3E%3C/svg%3E");
+}
+
+@media (prefers-color-scheme: dark) {
+  ul.list input[type='checkbox']:checked {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14' fill='none' stroke='%23131314' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 7.500l2.700 2.700L11 4.500'/%3E%3C/svg%3E");
+  }
 }
 
 .todo {
@@ -433,7 +635,7 @@ ul.list input[type='checkbox']:checked {
   resize: none;
   overflow: hidden;
   background: none;
-  font-size: 16px;
+  font-size: 14px;
   line-height: 24px;
 }
 
@@ -441,15 +643,27 @@ ul.list input[type='checkbox']:checked {
   outline: none;
 }
 
+.todo::placeholder,
+.notes::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
 .todo.checked {
   color: var(--muted);
   text-decoration: line-through;
 }
 
+/* Plain again while it is being edited, as in Google Tasks */
+.todo.checked:focus {
+  color: var(--text);
+  text-decoration: none;
+}
+
 .more {
   flex: none;
   width: 32px;
-  height: 26px;
+  height: 24px;
   color: var(--muted);
   font-size: 20px;
   line-height: 1;
@@ -470,7 +684,7 @@ li.menu-open > .more,
 .meta,
 .details {
   flex: 0 0 100%;
-  padding-left: 60px;
+  padding-left: 48px; /* under the title's text */
 }
 
 .meta {
@@ -496,41 +710,120 @@ li.menu-open > .more,
   font-weight: 600;
 }
 
+/* While a task is being edited, its details show under it instead of the summary */
 .details {
   display: none;
-  padding-top: 6px;
-  padding-bottom: 6px;
+  padding-top: 2px;
+  padding-bottom: 2px;
 }
 
-li.open .details {
+ul.list li:focus-within > .details {
   display: block;
 }
 
-li.open .preview {
-  display: none;
+ul.list li:focus-within > .meta {
+  display: none !important;
 }
 
-.notes,
-.due {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--card);
+.notes-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.notes-line .icon {
+  flex: none;
+  margin-top: 3px;
 }
 
 .notes {
-  display: block;
-  width: 100%;
-  margin-bottom: 8px;
-  padding: 8px 10px;
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  margin: 0;
+  padding: 0 4px;
+  border: none;
+  border-radius: 4px;
+  resize: none;
+  overflow: hidden;
+  background: none;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 24px;
 }
 
-.due {
-  padding: 4px 8px;
+.notes:focus {
+  outline: none;
+}
+
+.dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 0 4px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.chip:hover {
+  background: var(--hover);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.chip.on {
+  border-color: var(--tint);
+  background: var(--tint);
+  color: var(--on-tint);
+  font-weight: 600;
+}
+
+.chip.overdue {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.pick-date {
+  padding: 0 9px;
+}
+
+.pick-label:empty {
+  display: none;
 }
 
 .clear-due {
-  padding: 5px 10px;
+  padding: 0 10px;
   color: var(--muted);
+  font-size: 16px;
+}
+
+/* The date field is only there for its picker, which opens from the button */
+.pick {
+  position: relative;
+}
+
+.due {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* ---- Menu */
@@ -543,10 +836,10 @@ li.open .preview {
   right: 12px;
   width: 200px;
   padding: 6px;
-  border: 1px solid var(--line);
+  border: 1px solid transparent;
   border-radius: 12px;
-  background: var(--card);
-  box-shadow: 0 8px 24px rgba(20, 10, 40, 0.18);
+  background: var(--menu);
+  box-shadow: 0 8px 24px var(--shadow);
 }
 
 .menu.up {
@@ -611,6 +904,7 @@ li.dragging {
 .empty h2 {
   margin: 16px 0 4px;
   font-size: 20px;
+  font-weight: 400;
 }
 
 .empty p {
@@ -627,30 +921,44 @@ li.dragging {
   display: block;
 }
 
+/* As in Google Tasks: a grey triangle in the tick circles' column, and the words
+   lined up with the tasks' */
 .done-toggle,
 .done-more {
-  margin-left: 22px;
-  padding: 8px 10px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.done-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px 8px 16px;
+  color: color-mix(in srgb, var(--text) 85%, var(--card));
 }
 
 .done-toggle:before {
-  content: "\25B8";
-  display: inline-block;
-  width: 20px;
+  content: "";
+  width: 24px;
+  height: 24px;
+  background: var(--muted);
+  /* a triangle pointing right, turned down when open */
+  clip-path: polygon(42% 30%, 62% 50%, 42% 70%);
+  transition: transform 0.15s;
 }
 
 .done.open .done-toggle:before {
-  content: "\25BE";
+  transform: rotate(90deg);
 }
 
 .done-more {
-  margin-left: 54px;
+  margin-left: 40px;
+  padding: 8px 12px;
   color: var(--accent);
 }
 
 .done-none {
-  margin: 4px 0 8px 64px;
+  margin: 4px 0 8px 52px;
   color: var(--muted);
 }
 
@@ -661,13 +969,13 @@ dialog {
   padding: 24px;
   border: none;
   border-radius: 20px;
-  background: var(--card);
+  background: var(--menu);
   color: inherit;
-  box-shadow: 0 20px 60px rgba(20, 10, 40, 0.35);
+  box-shadow: 0 20px 60px var(--shadow);
 }
 
 dialog::backdrop {
-  background: rgba(20, 10, 40, 0.45);
+  background: rgba(0, 0, 0, 0.4);
 }
 
 dialog h2 {
@@ -728,28 +1036,24 @@ dialog input:focus {
   max-width: calc(100vw - 48px);
   padding: 12px 18px;
   border-radius: 10px;
-  background: #26222e;
-  color: #fff;
+  background: var(--toast);
+  color: var(--on-toast);
 }
 
 #message button {
   margin-left: 12px;
   padding: 2px 8px;
-  color: #c5b3ff;
+  color: var(--toast-action);
   font-weight: 600;
 }
 
 #message button:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: color-mix(in srgb, var(--on-toast) 12%, transparent);
 }
 
 @media (max-width: 960px) {
   .signed-in main {
     margin-left: auto;
-  }
-
-  .signed-in #side-toggle {
-    display: block;
   }
 
   .signed-in #side {
@@ -758,10 +1062,10 @@ dialog input:focus {
     top: 64px;
     left: 8px;
     padding: 14px 8px;
-    border: 1px solid var(--line);
+    border: 1px solid transparent;
     border-radius: 14px;
-    background: var(--card);
-    box-shadow: 0 8px 24px rgba(20, 10, 40, 0.18);
+    background: var(--menu);
+    box-shadow: 0 8px 24px var(--shadow);
   }
 
   .signed-in.side-open #side {
@@ -802,6 +1106,6 @@ dialog input:focus {
 
   .meta,
   .details {
-    padding-left: 60px;
+    padding-left: 48px;
   }
 }

@@ -190,6 +190,7 @@ function start() {
     showStatus('');
     $('body').addClass('signed-in');
     showLists();
+    loadProfile();
     send('GET', 'users/@me/lists/@default', null, function(list) { defaultList = list.id; });
   }, function(status) {
     showLogIn();
@@ -215,7 +216,6 @@ function showLists() {
     ));
   }));
   var hidden = $.grep(lists, function(list) { return isHidden(list.id); }).length;
-  $('#all-lists').attr('aria-current', hidden ? null : 'true');
   $('#none-shown').toggle(tasksLoaded && lists.length > 0 && hidden === lists.length);
   $('#cards .card').each(function() {
     if (!findList(this.list) || isHidden(this.list)) $(this).remove();
@@ -249,6 +249,7 @@ function loadCard(card) {
     card.find('.note').hide();
     showTasks(card, tasks);
     loadTicked(card);
+    countDone(card);
   }, function(status) {
     if (status === 404) { // deleted elsewhere
       lists = $.grep(lists, function(other) { return other.id !== list; });
@@ -303,10 +304,6 @@ function showList(id, show) {
   });
 }
 
-function showAllLists() {
-  hiddenLists([]);
-  showLists();
-}
 
 function createList(title) {
   send('POST', 'users/@me/lists', { title: title }, function(list) {
@@ -377,6 +374,7 @@ function endSession() {
   moves = [];
   tasksLoaded = false;
   selected = $();
+  picked = null;
   lists = [];
   defaultList = undefined;
   hideMessage();
@@ -387,7 +385,31 @@ function endSession() {
   auth.logout();
   hiddenLists([]);
   $('body').removeClass('signed-in side-open');
+  showProfile(null);
   showLogIn();
+}
+
+// Your name, email and picture, for the account button. Nothing else uses them,
+// and if Google won't give them, the button just has no picture.
+function loadProfile() {
+  var started = session, token = auth.token();
+  if (!token) return showProfile(null);
+  fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(response) { return response.ok ? response.json() : null; })
+    .catch(function() { return null; })
+    .then(function(profile) { if (started === session) showProfile(profile); });
+}
+
+function showProfile(profile) {
+  profile = profile || {};
+  var name = profile.name || '', email = profile.email || '';
+  var avatar = $('#avatar');
+  avatar.off('error').on('error', function() { avatar.prop('hidden', true); }); // shows the initial instead
+  avatar.prop('hidden', !profile.picture).attr('src', profile.picture || null);
+  $('#initial').text((name || email).charAt(0).toUpperCase());
+  $('#account-name').text(name).toggle(!!name);
+  $('#account-email').text(email).toggle(!!email);
+  $('#account-button').attr('aria-label', email ? 'Account: ' + email : 'Account').attr('title', email || null);
 }
 
 // ---- Tasks
@@ -507,14 +529,13 @@ function reload(card) {
     var id = active.closest(open.children()).children('.todo').attr('id');
     var field = active.is('.notes') ? '.notes' : '.todo';
     var start = active[0] && active[0].selectionStart;
-    var opened = open.find('li.open .todo').map(function() { return this.id; }).get();
     showTasks(card, tasks);
     open.find('.todo').each(function() {
       var row = $(this).parent();
-      if ($.inArray(this.id, opened) >= 0) row.addClass('open');
       if (id && this.id === id) row.find(field).setCursorPosition(start || 0);
     });
     loadTicked(card);
+    countDone(card);
   });
 }
 
@@ -606,12 +627,35 @@ function loadMoreIfNear() {
   });
 }
 
-// The total is only known once everything has been loaded.
+// "Completed (3)", or nothing at all when there are none, as in Google Tasks. The
+// total is counted by countDone, or known once everything has been loaded.
 function updateDoneCount() {
   $('#cards .card').each(function() {
-    var all = this.doneShown === doneDays.length;
-    $(this).find('.done-toggle').text('Completed' + (all ? ' (' + ($(this).find('.done-list li').length + this.doneWaiting.length) + ')' : ''));
+    var loaded = $(this).find('.done-list li').length + this.doneWaiting.length;
+    var total = this.doneShown === doneDays.length ? loaded : this.doneTotal;
+    $(this).find('.done-toggle').text('Completed' + (typeof total === 'number' ? ' (' + total + ')' : ''));
+    $(this).find('.done').toggle(this.loaded && (total > 0 || loaded > 0));
   });
+}
+
+// Ask Google how many completed tasks a list has: their ids only, a page at a time.
+// Not completedMin, as subtasks completed with their parent may have no date.
+function countDone(card) {
+  var el = card && card[0];
+  if (!el) return;
+  clearTimeout(el.countTimer);
+  el.countTimer = setTimeout(function() {
+    var count = 0;
+    (function page(token) {
+      send('GET', 'lists/' + encodeURIComponent(el.list) + '/tasks?showCompleted=true&showHidden=true&maxResults=100&fields=items(id,status),nextPageToken' +
+        (token ? '&pageToken=' + encodeURIComponent(token) : ''), null, function(result) {
+        count += $.grep((result && result.items) || [], function(task) { return task.status === 'completed' && !isRemoved(task.id); }).length;
+        if (result && result.nextPageToken) return page(result.nextPageToken);
+        el.doneTotal = count;
+        updateDoneCount();
+      });
+    })();
+  }, 500); // once a burst of changes has settled
 }
 
 function sortDone(card) {
@@ -674,6 +718,7 @@ function setCompleted(checkbox, after, quiet, failed) {
       sortDone(card);
     }
     renderMeta(row);
+    countDone(card);
     if (!done && !quiet) canUndo(function() { return live(todo).length && !live(todo).hasClass('checked'); }, function() { undoTick([todo], true); });
     if (after) after();
     if (!here && !done) reload(card); // puts it back in its place, unless more are on the way
@@ -773,12 +818,28 @@ function text(value) {
   return (value || '').replace(/\r\n?/g, '\n');
 }
 
+// A task Google hasn't made yet has a key of its own, so that rows can be put under
+// it straight away. Its subtasks are made, and moved, once it has an id.
+var newRows = 0;
+
+function taskKey(el) {
+  return el.id || el.localId;
+}
+
+function isLocal(key) {
+  return /^new-/.test(key || '');
+}
+
+function byKey(key) {
+  return $('ul.list .todo').filter(function() { return taskKey(this) === key; });
+}
+
 // Values are set with .val() and .text(), so quotes and HTML stay as text.
 function taskRow(task, card) {
   var done = task.status === 'completed';
-  var todo = $('<textarea class="todo" rows="1" aria-label="Task"></textarea>').toggleClass('checked', done)
+  var todo = $('<textarea class="todo" rows="1" placeholder="Title" aria-label="Task"></textarea>').toggleClass('checked', done)
     .val(text(task.title));
-  var notes = $('<textarea class="notes" rows="3" placeholder="Notes" aria-label="Notes"></textarea>').val(text(task.notes));
+  var notes = $('<textarea class="notes" rows="1" placeholder="Details" aria-label="Details"></textarea>').val(text(task.notes));
   var due = $('<input type="date" class="due" aria-label="Due date" min="2000-01-01" max="2999-12-31"/>').val((task.due || '').slice(0, 10));
   var row = $('<li></li>').toggleClass('subtask', !!task.parent).append(
     $('<span class="handle" title="Drag to move" aria-hidden="true">&#8942;&#8942;</span>'),
@@ -786,7 +847,14 @@ function taskRow(task, card) {
     todo,
     $('<button type="button" class="more" aria-label="Task options" aria-haspopup="true" aria-expanded="false">&#8942;</button>'),
     $('<div class="meta"><span class="when"></span><span class="preview"></span></div>'),
-    $('<div class="details"></div>').append(notes, $('<label>Due </label>').append(due), $('<button type="button" class="clear-due">Clear date</button>')),
+    // Shown while the task is being edited, as in Google Tasks
+    $('<div class="details"></div>').append(
+      $('<label class="notes-line"><svg class="icon" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M3 5h12M3 9h12M3 13h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg></label>').append(notes),
+      $('<div class="dates"></div>').append(
+        '<button type="button" class="chip" data-due="0">Today</button>',
+        '<button type="button" class="chip" data-due="1">Tomorrow</button>',
+        $('<span class="pick"></span>').append('<button type="button" class="chip pick-date" aria-label="Pick a date"><svg class="icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="10" rx="2" stroke="currentColor" stroke-width="1.4" fill="none"/><path d="M2.5 7h11M5.5 2v3M10.5 2v3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span class="pick-label"></span></button>', due),
+        '<button type="button" class="chip clear-due" aria-label="Clear date">&times;</button>')),
     $('<div class="menu" role="menu"></div>').append($.map([
       ['details', 'Notes and due date'], ['subtask', 'Add a subtask'], ['indent', 'Make subtask'], ['outdent', 'Move out'],
       ['top', 'Move to top'], ['up', 'Move up'], ['down', 'Move down'], ['delete', 'Delete']
@@ -795,8 +863,9 @@ function taskRow(task, card) {
     }))
   );
   if (task.id) todo.attr('id', task.id);
+  else todo[0].localId = 'new-' + (++newRows);
   todo[0].card = card;
-  todo[0].parentTask = task.parent;
+  todo[0].parentTask = todo[0].googleParent = task.parent;
   todo[0].position = task.position;
   todo[0].completedAt = done ? doneDate(task) : undefined;
   todo[0].saved = { title: todo.val(), notes: notes.val(), due: due.val() };
@@ -815,6 +884,12 @@ function autosize(todo) {
 function isoDay(date) {
   function two(n) { return (n < 10 ? '0' : '') + n; }
   return date.getFullYear() + '-' + two(date.getMonth() + 1) + '-' + two(date.getDate());
+}
+
+// Today, or so many days from it, as 2026-11-25.
+function dayFrom(days) {
+  var now = new Date();
+  return isoDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() + days));
 }
 
 function dayName(due) {
@@ -837,11 +912,15 @@ function renderMeta(row) {
   row.find('.when').text(when).toggleClass('overdue', !!overdue);
   row.find('.preview').text(values.notes.split('\n')[0]);
   row.children('.meta').toggle(!!(when || values.notes));
+  var other = values.due && values.due !== dayFrom(0) && values.due !== dayFrom(1);
+  row.find('[data-due]').each(function() { $(this).toggleClass('on', values.due === dayFrom(+$(this).attr('data-due'))); });
+  row.find('.pick-date').toggleClass('on', !!other).toggleClass('overdue', !!(other && overdue)).find('.pick-label').text(other ? dayName(values.due) : '');
+  row.find('.clear-due').toggle(!!values.due);
   row.children('.handle').toggleClass('off', row.children('.todo').hasClass('checked'));
 }
 
 function subtaskRows(todo) {
-  var id = todo.attr('id');
+  var id = todo[0] && taskKey(todo[0]);
   return todo.closest('ul').find('.todo').filter(function() { return id && this.parentTask === id; }).parent();
 }
 
@@ -890,10 +969,12 @@ function siblingAbove(todo, matches) {
   }).first()[0];
 }
 
-// Where to create a task: after the sibling above it, or first.
+// Where to create or move a task: after the sibling above it, or first. Google
+// hides ticked ones, and refuses one that it doesn't have under the same parent
+// yet, as it is still waiting to be moved there.
 function placement(todo) {
-  var above = siblingAbove(todo, function(el) { return el.id && !$(el).hasClass('checked'); }); // Google hides ticked ones
   var parent = todo[0].parentTask;
+  var above = siblingAbove(todo, function(el) { return el.id && !$(el).hasClass('checked') && el.googleParent === parent; });
   var query = [];
   if (above) query.push('previous=' + encodeURIComponent(above.id));
   if (parent) query.push('parent=' + encodeURIComponent(parent));
@@ -916,6 +997,15 @@ function saveTask(todo) {
   if (el.saving || !isUnsaved(todo)) return;
   var id = todo.attr('id');
   if (!id && mustWait(todo)) return saveSoon(todo);
+  if (!id && isLocal(el.parentTask)) { // its parent is still being made
+    var parent = byKey(el.parentTask);
+    if (parent.length) {
+      saveTask(parent);
+      return saveSoon(todo);
+    }
+    el.parentTask = undefined; // it went
+    todo.parent().removeClass('subtask');
+  }
   var sent = current(todo);
   el.saving = true;
   api(todo, id ? 'PATCH' : 'POST', id ? '/' + id : placement(todo), changes(todo), function(result) {
@@ -923,8 +1013,10 @@ function saveTask(todo) {
     el.saved = sent;
     if (!id) {
       todo.attr('id', result.id);
-      el.parentTask = result.parent;
+      el.googleParent = result.parent;
+      $('ul.list .todo').each(function() { if (this.parentTask === el.localId) this.parentTask = result.id; });
       if (el.gone) return deleteTask(todo);
+      if (el.parentTask !== result.parent) moveTask(todo); // indented or moved out while being made
       var box = todo.siblings('input[type=checkbox]');
       if (box.prop('checked')) setCompleted(box);
     }
@@ -959,6 +1051,30 @@ function canUndo(can, run) {
   typed = false;
   undoStack.push({ can: can, run: run });
   if (undoStack.length > 100) undoStack.shift();
+}
+
+// Make whatever fn adds to the undo list one entry, which undoes it last first.
+function asOneUndo(fn) {
+  var start = undoStack.length;
+  fn();
+  var entries = undoStack.splice(start);
+  if (!entries.length) return;
+  canUndo(function() {
+    return entries.some(function(entry) { return entry.can(); });
+  }, function() {
+    entries.slice().reverse().forEach(function(entry) { if (entry.can()) entry.run(); });
+  });
+}
+
+// Do something without adding it to the undo list, as part of something that is.
+function withoutUndo(fn) {
+  var was = undoing;
+  undoing = true;
+  try {
+    fn();
+  } finally {
+    undoing = was;
+  }
 }
 
 // Undo the latest thing that can be. Returns whether anything was.
@@ -1003,12 +1119,18 @@ function undoTick(todos, done) {
 
 var removals = []; // rows hidden but not yet deleted from Google, oldest first
 
-// Hide a task and its subtasks now, and delete them in a few seconds, unless undone.
+// Hide tasks and their subtasks now, and delete them in a few seconds, unless undone.
 function removeRow(todo, message, onUndo) {
-  var subtasks = subtaskRows(todo);
-  var rows = todo.parent().add(subtasks);
-  var removal = { todos: rows.children('.todo'), next: rows.last().next(), prev: rows.first().prev(), list: todo.parent().parent(), onUndo: onUndo };
-  removal.text = message || 'Task ' + (subtasks.length ? 'and ' + subtasks.length + ' subtask' + (subtasks.length > 1 ? 's ' : ' ') : '') + 'deleted.';
+  var rows = todo.parent();
+  todo.each(function() { rows = rows.add(subtaskRows($(this))); });
+  var subtasks = rows.length - 1;
+  var removal = { todos: rows.children('.todo'), list: todo.first().parent().parent(), onUndo: onUndo };
+  rows.each(function() { // where each goes back, as they needn't be next to each other
+    this.wasAfter = this.previousElementSibling;
+    this.wasBefore = $(this).nextAll('li').not(rows)[0];
+  });
+  removal.text = message || (todo.length > 1 ? rows.length + ' tasks deleted.'
+    : 'Task ' + (subtasks ? 'and ' + subtasks + ' subtask' + (subtasks > 1 ? 's ' : ' ') : '') + 'deleted.');
   removal.todos.each(function() {
     clearTimeout(this.timer);
     this.deleted = true; // before detaching, which fires focusout
@@ -1042,9 +1164,12 @@ function undoRemoval() {
 
 function putBack(r, todos) {
   todos.each(function() { this.deleted = this.gone = false; });
-  if (r.next.length && $.contains(document, r.next[0])) r.next.before(todos.parent());
-  else if (r.prev.length && $.contains(document, r.prev[0])) r.prev.after(todos.parent());
-  else r.list.append(todos.parent());
+  todos.each(function() { // in order, so a row's neighbour above is back before it
+    var row = this.parentNode;
+    if (row.wasAfter && $.contains(r.list[0], row.wasAfter)) $(row.wasAfter).after(row);
+    else if (row.wasBefore && $.contains(r.list[0], row.wasBefore)) $(row.wasBefore).before(row);
+    else r.list.append(row);
+  });
   if (r.list.is('.done-list')) sortDone(r.todos[0].card);
   else refreshRows();
 }
@@ -1060,6 +1185,7 @@ function finishRemoval(r) {
     this.gone = true;
     deleteTask($(this), r);
   });
+  if (r.list.is('.done-list')) countDone(r.todos[0].card);
 }
 
 function deleteTask(todo, removal) {
@@ -1072,15 +1198,29 @@ function deleteTask(todo, removal) {
   });
 }
 
-// Join a row's text, notes and date onto the one before it, and remove it.
+// Join a row's text, notes and date onto the one before it, and remove it. Its
+// subtasks go to the joined task, or to that task's parent if it is a subtask, as
+// Google has one level.
 function mergeRows(target, source) {
   if (hasOpenSubtasks(source)) return;
-  if (subtaskRows(source).length) {
-    showMessage('That task has subtasks, so it can’t be joined.', null, null, 4000);
+  var subtasks = subtaskRows(source);
+  if (subtasks.children('.todo.checked').length) { // Google won't move a completed task under another
+    showMessage('That task has completed subtasks, so it can\u2019t be joined.', null, null, 4000);
     return;
   }
-  var before = current(target), from = current(source);
-  if (!from.title && !from.notes && !from.due) return removeBlank(source, target, before.title.length);
+  var before = current(target), from = current(source), key = taskKey(source[0]);
+  var parent = target.parent().hasClass('subtask') ? target[0].parentTask : taskKey(target[0]);
+  var todos = subtasks.children('.todo');
+  function adopt(todos, parent) { // where they are, so the undo list only has the join
+    withoutUndo(function() {
+      todos.each(function() { place($(this), $(this).parent().next(), parent); });
+    });
+  }
+  adopt(todos, parent);
+  function giveBack() {
+    adopt($($.map(todos.get(), function(el) { return live($(el)).get(); })), key);
+  }
+  if (!from.title) return removeBlank(source, target, before.title.length, giveBack); // its notes and date go with it
   setValues(target, {
     title: before.title + from.title,
     notes: before.notes + (before.notes && from.notes ? '\n' : '') + from.notes,
@@ -1092,20 +1232,24 @@ function mergeRows(target, source) {
   removeRow(source, 'Tasks joined.', function() {
     setValues(target, before);
     saveTask(target);
+    giveBack();
   });
 }
 
-// Delete a row with nothing in it. Undo brings back the title it had.
-function removeBlank(todo, next, caret) {
+// Delete a row with no title, and any notes or date. Undo brings back the title it
+// had, and then calls onUndo.
+function removeBlank(todo, next, caret, onUndo) {
   var el = todo[0];
   if (hasOpenSubtasks(todo)) return;
-  if (!todo.attr('id') && !el.saving) { // never saved, so there's nothing to undo
+  var values = current(todo);
+  if (!todo.attr('id') && !el.saving && !values.notes && !values.due) { // nothing to undo
     todo.parent().remove();
     refreshRows();
   } else {
     var title = el.lastTitle || '';
     removeRow(todo, null, function() {
       setValues(todo, $.extend(current(todo), { title: title }));
+      if (onUndo) onUndo();
     });
   }
   next.setCursorPosition(caret);
@@ -1120,7 +1264,8 @@ function setValues(todo, values) {
   autosize(todo);
 }
 
-// ---- Moving. Rows are put in place first, then Google is told one move at a time.
+// ---- Moving. Rows are put in place first, then Google is told one move at a time,
+// each to where the row is by then. A task's googleParent is its parent at Google.
 
 var moves = [];
 
@@ -1132,13 +1277,27 @@ function moveTask(todo) {
 function nextMove() {
   var todo = moves[0];
   if (!todo) return;
-  var id = todo.attr('id');
+  var id = todo.attr('id'), parent = todo[0].parentTask;
+  if (isLocal(parent) && byKey(parent).length) { // wait for its new parent to be made
+    saveTask(byKey(parent));
+    return setTimeout(nextMove, 250);
+  }
+  // A new parent must be at the top level at Google first
+  var first = parent && $.grep(moves, function(other) { return other.attr('id') === parent && other[0].googleParent; })[0];
+  if (first) {
+    moves.splice($.inArray(first, moves), 1);
+    moves.unshift(first);
+    return nextMove();
+  }
   function done() {
     moves.shift();
     nextMove();
   }
   if (!id || todo[0].deleted) return done(); // a new task is created in its place
-  api(todo, 'POST', '/' + id + '/move' + placement(todo), null, done, function(status) {
+  api(todo, 'POST', '/' + id + '/move' + placement(todo), null, function() {
+    todo[0].googleParent = parent;
+    done();
+  }, function(status) {
     moves = [];
     showFailure('Could not move that task.', status);
     reload(todo[0].card); // back to how Google has it
@@ -1181,7 +1340,7 @@ function moveOutTicked(todo) {
   card.find('.done-list').append(row);
   sortDone(card);
   showMessage('Moved to Completed.', null, null, 4000);
-  api(todo, 'POST', '/' + el.id + '/move', null, null, function(status) {
+  api(todo, 'POST', '/' + el.id + '/move', null, function() { el.googleParent = undefined; }, function(status) {
     el.parentTask = parent;
     if (list.is('.claire') && openParent(todo).length) placeSubtask(todo);
     sortDone(card);
@@ -1210,16 +1369,27 @@ function moveRow(todo, how) {
   } else if (how === 'indent' && !sub) {
     above = row.prev().children('.todo');
     if (!above.length) return;
-    if (family(row).length > 1) {
-      showMessage('That task has subtasks, so it can\u2019t become one.', null, null, 4000);
+    var parent = row.prev().hasClass('subtask') ? above[0].parentTask : taskKey(above[0]);
+    if (!parent) return;
+    // Google has one level, so its own subtasks become the new parent's, where they are
+    var own = family(row).not(row);
+    if (own.children('.todo.checked').length) { // Google won't move a completed task under another
+      showMessage('That task has completed subtasks, so it can\u2019t become one.', null, null, 4000);
       return true; // dealt with: don't move focus as well
     }
-    var parent = row.prev().hasClass('subtask') ? above[0].parentTask : above.attr('id');
-    if (!parent) return;
-    place(todo, row.next(), parent);
+    asOneUndo(function() { // its subtasks first: Google won't put a task that has some under another
+      own.each(function() { place($(this).children('.todo'), $(this).next(), parent); });
+      place(todo, row.next(), parent);
+    });
     moved = true;
   } else if (how === 'outdent' && sub) {
-    place(todo, row.nextAll('li:not(.subtask)').first(), undefined);
+    // It stays where it is, and the subtasks below it become its own
+    var below = row.nextUntil('li:not(.subtask)'), open = below.filter(function() { return !$(this).children('.todo').hasClass('checked'); });
+    asOneUndo(function() {
+      row.before(below.not(open)); // Google won't put a completed task under another, so those stay
+      place(todo, row.next(), undefined);
+      open.each(function() { place($(this).children('.todo'), $(this).next(), taskKey(todo[0])); });
+    });
     moved = true;
   }
   if (caret) todo.setCursorPosition(caret[0], caret[1]);
@@ -1227,56 +1397,84 @@ function moveRow(todo, how) {
 }
 
 function addSubtask(todo) {
-  var id = todo.attr('id');
+  var id = taskKey(todo[0]);
   if (todo.parent().hasClass('subtask')) return; // Google only has one level
-  if (!id) return showMessage(todo.val() ? 'Still saving that task. Try again in a moment.' : 'Give that task a title first.', null, null, 4000);
   var row = taskRow({ parent: id }, todo[0].card);
   family(todo.parent()).last().after(row);
   refreshRows();
   row.children('.todo').focus();
 }
 
-// Move a task to another list, under the given task there or at the top.
-function moveToList(todo, id, previous) {
-  var from = todo[0].card, to = cardFor(id), task = todo.attr('id'), row = todo.parent();
+// Move tasks to another list, under the given task there or at the top. Several go
+// one at a time, the last first, so that they keep their order.
+function moveToList(todos, id, previous) {
+  var from = todos[0].card, to = cardFor(id), several = todos.length > 1;
   if (id === from[0].list) return;
-  if (subtaskRows(todo).length) return showMessage('That task has subtasks, so it can\u2019t change list.', null, null, 4000);
-  if (!task) return showMessage(todo.val() ? 'Still saving that task. Try again in a moment.' : 'Give that task a title first.', null, null, 4000);
+  if (todos.toArray().some(function(el) { return subtaskRows($(el)).length; })) {
+    return showMessage((several ? 'One of those tasks has' : 'That task has') + ' subtasks, so it can’t change list.', null, null, 4000);
+  }
+  var unmade = todos.filter(function() { return !this.id; });
+  if (unmade.length) return showMessage(unmade.val() ? 'Still saving that task. Try again in a moment.' : 'Give that task a title first.', null, null, 4000);
   function call(source, what, target, after, done, failed) {
     send('POST', 'lists/' + encodeURIComponent(source) + '/tasks/' + encodeURIComponent(what) + '/move?destinationTasklist=' + encodeURIComponent(target) +
       (after ? '&previous=' + encodeURIComponent(after) : ''), null, done, failed);
   }
   settle('Move anyway', function() {
-    var next = row.next();
-    var was = siblingAbove(todo, function(el) { return el.id && !$(el).hasClass('checked'); });
-    todo[0].deleted = true; // it is on its way
-    row.removeClass('selected').detach();
+    var rows = todos.parent(), after = rows.last().next();
+    var was = siblingAbove(todos.first(), function(el) { return el.id && !$(el).hasClass('checked'); });
+    var list = findList(id), name = (list || {}).title, moved = [];
+    function count(by) {
+      if (list && !to.length && typeof list.count === 'number') list.count += by;
+    }
+    todos.each(function() { this.deleted = true; }); // on their way
+    rows.removeClass('selected').detach();
     refreshRows();
-    call(from[0].list, task, id, previous, function(result) {
-      todo[0].gone = true;
-      var name = (findList(id) || {}).title, moved = (result && result.id) || task;
-      var list = findList(id);
-      if (list && !to.length && typeof list.count === 'number') list.count++;
+    function step(i) {
+      if (i < 0) return arrived();
+      var el = todos[i];
+      call(from[0].list, el.id, id, previous, function(result) {
+        el.gone = true;
+        moved.unshift((result && result.id) || el.id);
+        count(1);
+        step(i - 1);
+      }, function(status) {
+        var left = todos.slice(0, i + 1); // not moved
+        left.each(function() { this.deleted = false; });
+        if (after.length && $.contains(document, after[0])) after.before(left.parent());
+        else from.find('.claire').append(left.parent());
+        refreshRows();
+        if (list) showCount(list);
+        if (moved.length && to.length) reload(to);
+        showFailure('Could not move ' + (several ? 'those tasks.' : 'that task.'), status);
+      });
+    }
+    function arrived() {
       if (list) showCount(list);
       if (to.length) reload(to);
       var used = false;
-      function back() {
+      function back() { // the last first again, each under the task that was above them
         used = true;
-        call(id, moved, from[0].list, was && was.id, function() {
-          if (list && !to.length && typeof list.count === 'number') { list.count--; showCount(list); }
-          if (to.length) reload(to);
-          reload(from);
-        }, function(status) { showFailure('Could not move it back.', status); });
+        function stepBack(i) {
+          if (i < 0) {
+            if (list) showCount(list);
+            if (to.length) reload(to);
+            return reload(from);
+          }
+          call(id, moved[i], from[0].list, was && was.id, function() {
+            count(-1);
+            stepBack(i - 1);
+          }, function(status) {
+            showFailure('Could not move ' + (several ? 'them' : 'it') + ' back.', status);
+            if (to.length) reload(to);
+            reload(from);
+          });
+        }
+        stepBack(moved.length - 1);
       }
       canUndo(function() { return !used; }, back);
-      showMessage('Moved to ' + name + '.', 'Undo', back, 7000);
-    }, function(status) {
-      todo[0].deleted = false;
-      if (next.length && $.contains(document, next[0])) next.before(row);
-      else from.find('.claire').append(row);
-      refreshRows();
-      showFailure('Could not move that task.', status);
-    });
+      showMessage('Moved ' + (several ? moved.length + ' tasks ' : '') + 'to ' + name + '.', 'Undo', back, 7000);
+    }
+    step(todos.length - 1);
   });
 }
 

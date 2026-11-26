@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tab & Tick",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "description": "A fast to-do list in your new tab. Works with Google Tasks.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApDdZF2Ei6499TzdGeOmAtJEt2oRVMi0YldzYguCd2UWfqROxmKCW/cXutLV6fVaKU48u/9zRhhwnWQw54LOOPGWsvv+nvRIHMjkUZw3ZKSAHEJCBRCG0sDzzmj/+t6XRXPENBtFN3OgOqLARuyYfUE3/QSAdKWwddIFHnOvi3UjahWV9U+iLkYD2VmH7dO51ONQ9weF3ZfJIzVB8HTBXzycO3d9OjBDW36IS+AROH/HhfxeC/LwgE2ybvOSQScYhGVBSjPB6w4xPOy6PoArJcAnc4Jzw5b3P+JxqCGTovSbuBAzNuPgz9nUN73fhpFFH9ELlOT4KzPwbmCKsC7ApcwIDAQAB",
   "minimum_chrome_version": "105",
@@ -23,7 +23,9 @@
   "oauth2": {
     "client_id": "719894949389-2guc04s1s6ss2n1tuh29tau4lsca84cl.apps.googleusercontent.com",
     "scopes": [
-      "https://www.googleapis.com/auth/tasks"
+      "https://www.googleapis.com/auth/tasks",
+      "https://www.googleapis.com/auth/userinfo.profile",
+      "https://www.googleapis.com/auth/userinfo.email"
     ]
   }
 }
