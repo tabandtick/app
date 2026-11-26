@@ -452,6 +452,7 @@ function showProfile(profile) {
   $('#initial').text((name || email).charAt(0).toUpperCase());
   $('#account-name').text(name).toggle(!!name);
   $('#account-email').text(email).toggle(!!email);
+  $('#account').toggleClass('has-profile', !!(name || email));
   $('#account-button').attr('aria-label', email ? 'Account: ' + email : 'Account').attr('title', email || null);
 }
 

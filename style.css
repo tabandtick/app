@@ -258,9 +258,15 @@ ul.list li.no-match {
   font-size: 14px;
 }
 
-#account-name:not(:empty) ~ #log-out-button,
-#account-email:not(:empty) ~ #log-out-button {
-  border-top: 1px solid var(--line);
+/* Straight lines across the menu, not borders on its rounded items */
+.menu .divider {
+  height: 1px;
+  margin: 6px -6px;
+  background: var(--line);
+}
+
+#account:not(.has-profile) .divider.about-you {
+  display: none;
 }
 
 /* Hides and shows the lists, as Google Tasks' main menu button does */
