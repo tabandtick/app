@@ -226,6 +226,8 @@ function showLists() {
     if (made) card = newCard(list);
     if (made || !card.is($('#cards').children().eq(i))) $('#cards').append(card);
     if (!card.find('.list-title').is(':focus')) card.find('.list-title').val(list.title);
+    card.find('.claire').attr('aria-label', list.title);
+    card.find('.done-list').attr('aria-label', 'Completed in ' + list.title);
     if (made) loadCard(card);
   });
   refreshRows();
@@ -958,7 +960,16 @@ function renderMeta(row) {
   row.find('.pick-date').toggleClass('on', !!other).toggleClass('overdue', !!(other && overdue)).find('.pick-label').text(other ? dayName(values.due) : '');
   row.find('.clear-due').toggle(!!values.due);
   row.children('.handle').toggleClass('off', row.children('.todo').hasClass('checked'));
+  // What a screen reader says: which task each control is for, and what's switched on
+  var todo = row.children('.todo'), title = $.trim(values.title) || 'new task', meta = row.children('.meta');
+  if (!meta.attr('id')) meta.attr('id', 'meta-' + (++metas));
+  todo.attr({ 'aria-label': row.hasClass('subtask') ? 'Subtask' : 'Task', 'aria-describedby': meta.attr('id') });
+  row.children('input[type=checkbox]').attr('aria-label', (todo.hasClass('checked') ? 'Reopen ' : 'Complete ') + title);
+  row.children('.more').attr('aria-label', 'Options for ' + title);
+  row.find('[data-due]').each(function() { $(this).attr('aria-pressed', String($(this).hasClass('on'))); });
+  row.find('.pick-date').attr('aria-label', other ? 'Due ' + dayName(values.due) + ', pick another date' : 'Pick a date');
 }
+var metas = 0;
 
 function subtaskRows(todo) {
   var id = todo[0] && taskKey(todo[0]);
@@ -1038,6 +1049,13 @@ function saveTask(todo) {
   if (el.saving || !isUnsaved(todo)) return;
   var id = todo.attr('id');
   if (!id && mustWait(todo)) return saveSoon(todo);
+  // A new task goes after the one above it at Google, so wait for moves among the
+  // tasks around it to land first: one moved there a moment ago may not be there yet.
+  // (Only those: a move waiting for this task to be made must not hold it up.)
+  if (!id && moves.some(function(other) {
+    var o = other[0];
+    return o !== el && o.parentTask === el.parentTask && o.card && el.card && o.card[0] === el.card[0];
+  })) return saveSoon(todo);
   if (!id && isLocal(el.parentTask)) { // its parent is still being made
     var parent = byKey(el.parentTask);
     if (parent.length) {
@@ -1354,6 +1372,7 @@ function place(todo, before, parent) {
   else todo[0].card.find('.claire').append(rows);
   todo[0].parentTask = parent;
   todo.parent().toggleClass('subtask', !!parent);
+  renderMeta(todo.parent()); // "Task" or "Subtask"
   refreshRows();
   if (was.above === todo.parent().prev()[0] && was.parent === parent) return;
   moveTask(todo);

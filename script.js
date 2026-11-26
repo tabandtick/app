@@ -144,7 +144,9 @@ function keydown(event) {
 		: command && !event.altKey && !event.shiftKey ? { 221: 'indent', 219: 'outdent' }[code] : null;
 	if (how) {
 		event.preventDefault();
+		var wasSub = row.hasClass('subtask'), wasAt = row.index();
 		moveRow(todo, how);
+		announceMove(todo, how, wasSub, wasAt);
 		return;
 	}
 
@@ -154,7 +156,11 @@ function keydown(event) {
 		if (command || event.altKey || el.tabbedTo) return;
 		var pressed = tabbing;
 		tabbing = false; // moving the row focuses it again, which isn't reaching it by Tab
-		if (moveRow(todo, event.shiftKey ? 'outdent' : 'indent')) event.preventDefault();
+		var sub = row.hasClass('subtask');
+		if (moveRow(todo, event.shiftKey ? 'outdent' : 'indent')) {
+			event.preventDefault();
+			announceMove(todo, 'indent', sub, row.index());
+		}
 		else tabbing = pressed;
 		return;
 	}
@@ -230,6 +236,7 @@ function keydown(event) {
 // { list, base, anchor, head }: the list's element, rows picked one at a time with
 // Cmd+click, and the rows a range runs between, if there is one
 var picked = null;
+var pickHinted = false; // the keys to use are said once
 
 // The picked rows, in order, without stopping if there are none.
 function pickedSet() {
@@ -249,7 +256,13 @@ function pickedRows() {
 
 function showPicked() {
 	$('li.picked').removeClass('picked');
-	pickedRows().addClass('picked');
+	var rows = pickedRows().addClass('picked');
+	if (picked && rows.length !== picked.told) { // say how many, and the first time what to do
+		picked.told = rows.length;
+		announce(rows.length + (rows.length === 1 ? ' task' : ' tasks') + ' picked' + (pickHinted ? '' :
+			'. Backspace deletes them, ' + (mac ? 'Command' : 'Control') + ' Enter ticks them, Escape goes back.'));
+		pickHinted = true;
+	}
 	if (picked && picked.head) picked.head.scrollIntoView({ block: 'nearest' });
 }
 
@@ -288,6 +301,7 @@ function pickedTops() {
 
 function movePicked(how) {
 	var todos = pickedTops().get();
+	announce(how === 'down' ? 'Moved down' : how === 'top' ? 'Moved to the top' : 'Moved up');
 	if (how === 'down' || how === 'top') todos.reverse(); // the bottom one makes room first
 	asOneUndo(function() {
 		$.each(todos, function(i, el) {
@@ -404,6 +418,21 @@ function copyPicked(event) {
 	event.clipboardData.setData('text/plain', titles.join('\n'));
 	event.preventDefault();
 	if (event.type === 'cut') deletePicked();
+}
+
+// Tell screen readers what just happened, when nothing they read would say so
+function announce(text) {
+	var box = $('#announce');
+	box.text('');
+	setTimeout(function() { box.text(text); }, 50); // a change, even if the words are the same
+}
+
+function announceMove(todo, how, wasSub, wasAt) {
+	var row = todo.parent(), sub = row.hasClass('subtask');
+	if (sub !== wasSub) {
+		var parent = sub ? byKey(todo[0].parentTask) : $();
+		announce(sub ? 'Subtask of ' + ($.trim(parent.val()) || 'new task') : 'Moved out, not a subtask');
+	} else if (row.index() !== wasAt) announce(how === 'down' ? 'Moved down' : 'Moved up');
 }
 
 // The details show while a task is being edited, so going to its notes shows them.

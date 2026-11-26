@@ -40,7 +40,12 @@ for (let i = 0; i < 100 && !targets; i++) {
 const ws = new WebSocket(targets.find(t => t.type === 'page').webSocketDebuggerUrl);
 await new Promise(r => ws.onopen = r);
 let id = 0; const pending = {};
-ws.onmessage = e => { const m = JSON.parse(e.data); if (pending[m.id]) { pending[m.id](m); delete pending[m.id]; } };
+const pageErrors = [];
+ws.onmessage = e => {
+  const m = JSON.parse(e.data);
+  if (m.method === 'Runtime.exceptionThrown') pageErrors.push(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text);
+  if (pending[m.id]) { pending[m.id](m); delete pending[m.id]; }
+};
 const cdp = (method, params = {}) => new Promise(r => { pending[++id] = r; ws.send(JSON.stringify({ id, method, params })); });
 const js = async expr => {
   const m = await cdp('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true });
@@ -56,6 +61,7 @@ async function mouse(type, x, y) {
 async function hover(x, y) { await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' }); await wait(30); }
 async function click(x, y) { await hover(x, y); await mouse('mousePressed', x, y); await mouse('mouseReleased', x, y); await wait(50); }
 const box = sel => js(`(function() { var r = (${sel}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, r.top, r.bottom]; })()`);
+const dayIso = n => { const d = new Date(); d.setDate(d.getDate() + n); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + 'T00:00:00.000Z'; };
 const rowOf = title => `$('.claire .todo').filter(function() { return this.value === '${title}'; }).parent()[0]`;
 async function key(name, mods = []) {
   const m = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
@@ -74,6 +80,7 @@ function check(label, got, want) {
 }
 
 await cdp('Page.enable');
+await cdp('Runtime.enable'); // to hear of errors in the page
 await cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
 await cdp('Page.navigate', { url: base + 'index.html' });
 await wait(1500);
@@ -101,6 +108,7 @@ await js(`
           serverErrors.push('create ' + decodeURIComponent(path)); return failed && failed(400);
         }
         var task = { id: 'n' + (++window.made), parent: parent };
+        (window.log = window.log || []).push('make ' + task.id + ' "' + (body && body.title) + '" ' + decodeURIComponent(path.split('?')[1] || ''));
         server.splice(previous ? server.indexOf(findc(previous)) + 1 : 0, 0, task);
         if (done) done({ id: task.id, parent: parent, title: body && body.title });
       }, 300);
@@ -118,6 +126,7 @@ await js(`
         server.some(function(s) { return s.parent === id; }))) || (previous && (!find(previous) || find(previous).parent !== parent));
       if (bad) { serverErrors.push(decodeURIComponent(path)); return failed && failed(400); }
       var task = find(id);
+      (window.log = window.log || []).push('move ' + id + ' ' + decodeURIComponent(m[3] || ''));
       server.splice(server.indexOf(task), 1);
       task.parent = parent;
       server.splice(previous ? server.indexOf(find(previous)) + 1 : 0, 0, task);
@@ -324,6 +333,8 @@ async function googleMatches(label) {
   const [errors, google, screen] = await settled();
   check(label + ': Google refused nothing', errors, []);
   check(label + ': Google has what the screen shows', google, screen);
+  if (google !== screen) console.log('   what Google was asked:\n     ' + (await js('window.log || []')).join('\n     '));
+  await js('window.log = []; true');
 }
 const fam5 = [{ id: 't1', title: 'One', position: '1' }, { id: 't2', title: 'Two', parent: 't1', position: '1' },
   { id: 't3', title: 'Three', parent: 't1', position: '2' }, { id: 't4', title: 'Four', parent: 't1', position: '3' },
@@ -718,6 +729,32 @@ await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: '?', code: 'Slash', 
 await wait(100);
 check('...but ? while typing is just a question mark', [await js(`$('#shortcuts').prop('open')`), await js(`document.activeElement.value`)], [false, 'Alpha, changed elsewhere?']);
 
+// ---- What screen readers are told
+await reset([{ id: 'r1', title: 'Plan the party', position: '1' }, { id: 'r2', title: 'Order the cake', position: '2', due: dayIso(1) },
+  { id: 'r3', title: 'Send the invites', position: '3' }]);
+const said = () => js(`$('#announce').text()`);
+await js(`pickHinted = false; true`); // as if picking for the first time
+check('each tick circle and menu names its task', await js(`[$(${rowOf('Order the cake')}).children('input').attr('aria-label'), $(${rowOf('Order the cake')}).children('.more').attr('aria-label')]`),
+  ['Complete Order the cake', 'Options for Order the cake']);
+check('the date and notes are read with the task', await js(`$('#' + $(${rowOf('Order the cake')}).children('.todo').attr('aria-describedby')).text()`), 'Tomorrow');
+check('the Tomorrow chip says it is on', await js(`[$(${rowOf('Order the cake')}).find('[data-due=1]').attr('aria-pressed'), $(${rowOf('Order the cake')}).find('[data-due=0]').attr('aria-pressed')]`), ['true', 'false']);
+check('the list is named', await js(`$('#cards .claire').first().attr('aria-label')`), await js(`$('#cards .list-title').first().val()`));
+await caretIn('Order the cake', -1);
+await key('Tab'); await wait(120);
+check('Tab is announced', [await said(), await js(`$(${rowOf('Order the cake')}).children('.todo').attr('aria-label')`)], ['Subtask of Plan the party', 'Subtask']);
+await key('Tab', ['shift']); await wait(120);
+check('Shift+Tab is announced', await said(), 'Moved out, not a subtask');
+await key('ArrowDown', ['alt']); await wait(120);
+check('Alt+Down is announced', await said(), 'Moved down');
+await caretIn('Plan the party', -1);
+await key('ArrowDown', ['shift']); await wait(120);
+check('picking is announced, with the keys the first time', await said(), '2 tasks picked. Backspace deletes them, ' + (process.platform === 'darwin' ? 'Command' : 'Control') + ' Enter ticks them, Escape goes back.');
+await key('ArrowDown', ['shift']); await wait(120);
+check('...and then just the count', await said(), '3 tasks picked');
+await key('Escape');
+await js(`$(${rowOf('Plan the party')}).children('input').prop('checked', true).trigger('change'); true`); await wait(100);
+check('a ticked task offers to reopen', await js(`$('.todo').filter(function() { return this.value === 'Plan the party'; }).siblings('input').attr('aria-label')`), 'Reopen Plan the party');
+
 // ---- The website's sign-in is renewed on a key press near the end of its hour.
 // Last, as it loads the page again. Google's script is replaced by a fake.
 // (Marked as logged out, so the page doesn't try the made-up token on Google as it loads.)
@@ -740,6 +777,7 @@ await key('Escape');
 check('...and not again while the new one is fresh', await js('calls.length'), 2);
 
 const errors = await js(`window.__errors || []`);
+check('no errors in the page', pageErrors.slice(0, 3), []);
 console.log(failures ? failures + ' failed' : 'all passed');
 ws.close(); chrome.kill(); server.close();
 try { rmSync(dir, { recursive: true, force: true }); } catch {}

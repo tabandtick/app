@@ -40,7 +40,7 @@
     --red: #f2b8b5;
     --toast: #e3e3e3;
     --on-toast: #303030;
-    --toast-action: #6d4bd8;
+    --toast-action: #5636bd; /* 4.5:1 on the light bar */
     --shadow: rgba(0, 0, 0, 0.5);
   }
 }
@@ -248,9 +248,24 @@ h1 {
 
 @media (prefers-reduced-motion: reduce) {
   #side,
-  .signed-in main {
+  .signed-in main,
+  #lists-toggle .chevron,
+  .done-toggle:before {
     transition: none !important;
   }
+}
+
+/* Read by screen readers, not shown */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* ---- Lists */
