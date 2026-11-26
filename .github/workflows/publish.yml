@@ -26,6 +26,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash  # with pipefail, so a failed request fails the step
+
 env:
   ITEM_ID: amidicalcieolbecimlogomhnokopigp
   API: https://chromewebstore.googleapis.com
@@ -63,11 +67,12 @@ jobs:
           CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
           REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
         run: |
-          token=$(curl -sS --fail-with-body https://oauth2.googleapis.com/token \
+          answer=$(curl -sS --fail-with-body https://oauth2.googleapis.com/token \
             --data-urlencode "client_id=$CLIENT_ID" \
             --data-urlencode "client_secret=$CLIENT_SECRET" \
             --data-urlencode "refresh_token=$REFRESH_TOKEN" \
-            --data-urlencode "grant_type=refresh_token" | jq -r .access_token)
+            --data-urlencode "grant_type=refresh_token") || { echo "$answer" | jq '{error, error_description}'; exit 1; }
+          token=$(echo "$answer" | jq -r .access_token)
           if [ -z "$token" ] || [ "$token" = null ]; then
             echo "::error::Google gave no token. Check the three CWS_ secrets, and that the refresh token hasn't expired."
             exit 1
@@ -90,15 +95,16 @@ jobs:
         run: |
           item="publishers/$PUBLISHER_ID/items/$ITEM_ID"
           answer=$(curl -sS --fail-with-body -X POST -H "Authorization: Bearer $TOKEN" \
-            -T tab-and-tick.zip "$API/upload/v2/$item:upload")
+            -T tab-and-tick.zip "$API/upload/v2/$item:upload") || { echo "$answer"; exit 1; }
           echo "$answer" | jq .
           state=$(echo "$answer" | jq -r .uploadState)
           # A big package can still be processing: ask again for up to two minutes
           for i in $(seq 1 24); do
             [ "$state" = IN_PROGRESS ] || [ "$state" = UPLOAD_IN_PROGRESS ] || break
             sleep 5
-            state=$(curl -sS --fail-with-body -H "Authorization: Bearer $TOKEN" \
-              "$API/v2/$item:fetchStatus" | jq -r .lastAsyncUploadState)
+            status=$(curl -sS --fail-with-body -H "Authorization: Bearer $TOKEN" \
+              "$API/v2/$item:fetchStatus") || { echo "$status"; exit 1; }
+            state=$(echo "$status" | jq -r .lastAsyncUploadState)
           done
           if [ "$state" != SUCCEEDED ]; then
             echo "::error::The upload ended as $state"
@@ -111,7 +117,7 @@ jobs:
           PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
         run: |
           answer=$(curl -sS --fail-with-body -X POST -H "Authorization: Bearer $TOKEN" \
-            "$API/v2/publishers/$PUBLISHER_ID/items/$ITEM_ID:publish")
+            "$API/v2/publishers/$PUBLISHER_ID/items/$ITEM_ID:publish") || { echo "$answer"; exit 1; }
           echo "$answer" | jq .
           state=$(echo "$answer" | jq -r .state)
           case "$state" in
