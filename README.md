@@ -68,6 +68,17 @@ The store package is made by `tools/build-store.py`. To work on it locally:
 
 After changing a file, press reload on `chrome://extensions`.
 
+## Releasing
+
+Change `version` in `manifest.json`, commit, then push a tag to match:
+
+    git tag v1.1.5 && git push origin main v1.1.5
+
+`.github/workflows/publish.yml` then builds the package, uploads it to the Chrome Web
+Store and submits it for review. It needs four repository secrets, listed at the top of
+that file. Changes to the store listing or privacy answers are still made in the
+dashboard, before tagging.
+
 ## The website
 
     python3 -m http.server 8080

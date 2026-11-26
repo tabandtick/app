@@ -1,0 +1,104 @@
+# Sends a new version to the Chrome Web Store when a tag like v1.1.5 is pushed.
+#
+#   1. Change "version" in manifest.json, and commit it.
+#   2. git tag v1.1.5 && git push origin main v1.1.5
+#
+# It builds the store package with tools/build-store.py, uploads it, and submits it
+# for review, as "Submit for review" does in the dashboard. Changes to the listing or
+# the privacy answers still have to be made in the dashboard first.
+#
+# Needs these repository secrets (Settings > Secrets and variables > Actions):
+#   CWS_CLIENT_ID, CWS_CLIENT_SECRET  an OAuth client in Google Cloud, with the
+#                                     Chrome Web Store API turned on
+#   CWS_REFRESH_TOKEN                 a refresh token for the account that owns the
+#                                     item, with the scope .../auth/chromewebstore
+#   CWS_PUBLISHER_ID                  Developer Dashboard > Settings
+
+name: Publish to the Chrome Web Store
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+env:
+  ITEM_ID: amidicalcieolbecimlogomhnokopigp
+  API: https://chromewebstore.googleapis.com
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches manifest.json
+        run: |
+          version=$(python3 -c "import json; print(json.load(open('manifest.json'))['version'])")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::The tag is $GITHUB_REF_NAME but manifest.json says $version"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Build the store package
+        run: python3 tools/build-store.py tab-and-tick.zip
+
+      - name: Keep the package with the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: tab-and-tick-${{ env.VERSION }}
+          path: tab-and-tick.zip
+
+      - name: Get a token from Google
+        env:
+          CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+        run: |
+          token=$(curl -sS --fail-with-body https://oauth2.googleapis.com/token \
+            --data-urlencode "client_id=$CLIENT_ID" \
+            --data-urlencode "client_secret=$CLIENT_SECRET" \
+            --data-urlencode "refresh_token=$REFRESH_TOKEN" \
+            --data-urlencode "grant_type=refresh_token" | jq -r .access_token)
+          if [ -z "$token" ] || [ "$token" = null ]; then
+            echo "::error::Google gave no token. Check the three CWS_ secrets, and that the refresh token hasn't expired."
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          echo "TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Upload
+        env:
+          PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+        run: |
+          item="publishers/$PUBLISHER_ID/items/$ITEM_ID"
+          answer=$(curl -sS --fail-with-body -X POST -H "Authorization: Bearer $TOKEN" \
+            -T tab-and-tick.zip "$API/upload/v2/$item:upload")
+          echo "$answer" | jq .
+          state=$(echo "$answer" | jq -r .uploadState)
+          # A big package can still be processing: ask again for up to two minutes
+          for i in $(seq 1 24); do
+            [ "$state" = IN_PROGRESS ] || [ "$state" = UPLOAD_IN_PROGRESS ] || break
+            sleep 5
+            state=$(curl -sS --fail-with-body -H "Authorization: Bearer $TOKEN" \
+              "$API/v2/$item:fetchStatus" | jq -r .lastAsyncUploadState)
+          done
+          if [ "$state" != SUCCEEDED ]; then
+            echo "::error::The upload ended as $state"
+            exit 1
+          fi
+
+      - name: Submit for review
+        env:
+          PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+        run: |
+          answer=$(curl -sS --fail-with-body -X POST -H "Authorization: Bearer $TOKEN" \
+            "$API/v2/publishers/$PUBLISHER_ID/items/$ITEM_ID:publish")
+          echo "$answer" | jq .
+          state=$(echo "$answer" | jq -r .state)
+          case "$state" in
+            PENDING_REVIEW|PUBLISHED|STAGED) echo "Version $VERSION: $state" ;;
+            *) echo "::error::The store answered $state"; exit 1 ;;
+          esac
