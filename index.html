@@ -117,6 +117,13 @@
 
     <div id="drop-line"></div>
     <div id="message" role="status"><span></span> <button type="button"></button></div>
+    <!-- On touch screens, what to do with the picked tasks -->
+    <div id="pick-bar" role="toolbar" aria-label="Selected tasks">
+      <span class="count"></span>
+      <button type="button" data-pick="tick">Tick</button>
+      <button type="button" data-pick="delete">Delete</button>
+      <button type="button" data-pick="done">Done</button>
+    </div>
     <!-- For screen readers: what picking and moving did, which can't be seen -->
     <div id="announce" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 

@@ -242,6 +242,8 @@ function keydown(event) {
 // { list, base, anchor, head }: the list's element, rows picked one at a time with
 // Cmd+click, and the rows a range runs between, if there is one
 var picked = null;
+var heldUntil = 0; // while a task is held, and just after, the touch that ends it is ignored
+var held = false;
 var pickHinted = false; // the keys to use are said once
 
 // The picked rows, in order, without stopping if there are none.
@@ -263,6 +265,7 @@ function pickedRows() {
 function showPicked() {
 	$('li.picked').removeClass('picked');
 	var rows = pickedRows().addClass('picked');
+	$('#pick-bar .count').text(rows.length + ' selected');
 	if (picked && rows.length !== picked.told) { // say how many, and the first time what to do
 		picked.told = rows.length;
 		announce(rows.length + (rows.length === 1 ? ' task' : ' tasks') + ' picked' + (pickHinted ? '' :
@@ -289,8 +292,31 @@ function extendPicking(by) {
 	showPicked();
 }
 
+// On a touch screen: start picking with one task, by holding it or from its menu.
+// Taps then add or take away tasks, and a bar at the bottom acts on them.
+function touchPick(row) {
+	picked = { list: row.parent()[0], base: [row[0]], anchor: null, head: null };
+	pickHinted = true; // the keys mean nothing on a phone
+	$('body').addClass('touch-picking');
+	$('li.selected').removeClass('selected');
+	$(picked.list).attr('tabindex', '-1');
+	refocusPicked();
+}
+
+function togglePick(row) {
+	if (!picked || picked.list !== row.parent()[0]) return touchPick(row); // another list starts again
+	var base = pickedSet().get(), at = $.inArray(row[0], base);
+	if (at >= 0) base.splice(at, 1);
+	else base.push(row[0]);
+	picked.base = base;
+	picked.anchor = picked.head = null;
+	if (!base.length) return stopPicking();
+	refocusPicked();
+}
+
 // Stop, and put the caret at the 'start' or end of a row, if one is given.
 function stopPicking(row, where) {
+	$('body').removeClass('touch-picking');
 	picked = null;
 	setTimeout(dropBlanks); // once focus has landed
 	$('li.picked').removeClass('picked');
@@ -699,6 +725,7 @@ $(document).ready(function() {
 		.on('keydown', '.todo', keydown)
 		.on('focusin', 'ul.list li', function(event) {
 			if (picked && $(event.target).closest('.more, .menu').length && isPicked($(this))) return; // its menu
+			if (picked && Date.now() < heldUntil) return; // the tap that ends holding a task
 			if (picked) stopPicking();
 			$('li.selected').removeClass('selected');
 			selected = $(this).addClass('selected').children('.todo');
@@ -714,6 +741,7 @@ $(document).ready(function() {
 			if (!picked || event.target !== picked.list || !document.hasFocus()) return;
 			var to = $(event.relatedTarget);
 			if (to.closest('.more, .menu').length && isPicked(to.closest('li'))) return; // its menu
+			if (to.closest('#pick-bar').length) return;
 			stopPicking();
 		})
 		.on('input', '.todo', function() {
@@ -770,6 +798,7 @@ $(document).ready(function() {
 		if (isPicked(row) && how === 'delete') deletePicked();
 		else if (isPicked(row) && /^(up|down|top)$/.test(how)) movePicked(how);
 		else if (isPicked(row) && /^(indent|outdent)$/.test(how)) indentPicked(how);
+		else if (how === 'select') touchPick(row);
 		else if (how === 'details') openDetails(row);
 		else if (how === 'delete') deleteAndMoveOn(todo);
 		else moveRow(todo, how);
@@ -890,6 +919,76 @@ $(document).ready(function() {
 	});
 
 	document.addEventListener('pointerdown', clickPick, true);
+
+	// Holding a task for a moment, by touch, starts picking with it
+	var hold = null;
+	document.addEventListener('pointerdown', function(event) {
+		if (event.pointerType !== 'touch' || picked) return;
+		var target = $(event.target), row = target.closest('.claire > li, .done-list > li');
+		if (!row.length || target.closest('input[type=checkbox], .handle, .more, .menu, .details').length) return;
+		hold = { x: event.clientX, y: event.clientY, timer: setTimeout(function() {
+			hold = null;
+			held = true; // the finger is still down: its lifting is ignored
+			heldUntil = Date.now() + 60000;
+			touchPick(row);
+			if (navigator.vibrate) navigator.vibrate(10);
+		}, 450) };
+	}, true);
+	function letGo(event) {
+		if (!hold) return;
+		if (event.type === 'pointermove' && Math.abs(event.clientX - hold.x) < 8 && Math.abs(event.clientY - hold.y) < 8) return;
+		clearTimeout(hold.timer);
+		hold = null;
+	}
+	['pointermove', 'pointerup', 'pointercancel', 'scroll'].forEach(function(type) { document.addEventListener(type, letGo, true); });
+	document.addEventListener('contextmenu', function(event) { // the phone's own menu after holding
+		if (Date.now() < heldUntil) event.preventDefault();
+	}, true);
+
+	// While picking by touch, a tap adds a task or takes it away. On the tap's end, so
+	// that scrolling doesn't; and the touch mustn't put the caret in it either.
+	function tappable(target) {
+		target = $(target);
+		var row = target.closest('ul.list > li');
+		return row.length && !target.closest('input[type=checkbox], .handle, .more, .menu, .details').length ? row : null;
+	}
+	var tapping = null;
+	document.addEventListener('pointerdown', function(event) {
+		var row = event.pointerType === 'touch' && $('body').hasClass('touch-picking') && tappable(event.target);
+		if (!row) return;
+		event.preventDefault(); // no caret
+		tapping = { row: row[0], x: event.clientX, y: event.clientY, at: Date.now() };
+	}, true);
+	document.addEventListener('pointerup', function(event) {
+		if (held) { // the end of a hold: what follows it is ignored briefly
+			held = false;
+			heldUntil = Date.now() + 120;
+			return;
+		}
+		var t = tapping;
+		tapping = null;
+		if (!t || event.pointerType !== 'touch' || Date.now() < heldUntil) return;
+		var still = Math.abs(event.clientX - t.x) < 8 && Math.abs(event.clientY - t.y) < 8 && Date.now() - t.at < 500;
+		var row = tappable(document.elementFromPoint(event.clientX, event.clientY));
+		if (still && row && row[0] === t.row) togglePick(row);
+	}, true);
+	document.addEventListener('pointercancel', function() { tapping = null; }, true); // it was a scroll
+	document.addEventListener('touchend', function(event) { // the end of a hold: no caret, no keyboard
+		if (Date.now() < heldUntil && tappable(event.target)) event.preventDefault();
+	}, { capture: true, passive: false });
+
+	$('#pick-bar').on('pointerdown', function(event) { event.preventDefault(); }) // keeps the picking
+		.on('click', '[data-pick]', function() {
+			var what = $(this).attr('data-pick');
+			if (what === 'tick') tickPicked();
+			else if (what === 'delete') deletePicked();
+			else stopPicking();
+		});
+
+	// On a narrow screen, tapping outside the lists' panel closes it
+	$(document).on('click', function(event) {
+		if ($('body').hasClass('side-open') && !$(event.target).closest('#side, #side-toggle').length) $('body').removeClass('side-open');
+	});
 	document.addEventListener('keydown', pickingKey);
 	document.addEventListener('copy', copyPicked);
 	document.addEventListener('cut', copyPicked);

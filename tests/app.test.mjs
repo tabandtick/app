@@ -784,6 +784,45 @@ await key('Escape');
 await js(`$(${rowOf('Plan the party')}).children('input').prop('checked', true).trigger('change'); true`); await wait(100);
 check('a ticked task offers to reopen', await js(`$('.todo').filter(function() { return this.value === 'Plan the party'; }).siblings('input').attr('aria-label')`), 'Reopen Plan the party');
 
+// ---- Phones and tablets: holding and tapping to pick, the bar, and dragging by touch
+await cdp('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+await reset([{ id: 'u1', title: 'Alpha', position: '1' }, { id: 'u2', title: 'Bravo', position: '2' },
+  { id: 'u3', title: 'Charlie', position: '3' }, { id: 'u4', title: 'Delta', position: '4' }]);
+await js(`$('#message').hide(); document.activeElement.blur(); true`);
+check('a touch screen counts as one', await js(`matchMedia('(pointer: coarse)').matches`), true);
+const touch = async (type, x, y) => { await cdp('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] }); await wait(30); };
+const tap = async (x, y) => { await touch('touchStart', x, y); await touch('touchEnd'); await wait(120); };
+const hold = async (x, y) => { await touch('touchStart', x, y); await wait(650); await touch('touchEnd'); await wait(150); };
+const at = async title => (await box(`$(${rowOf(title)}).children('.todo')[0]`)).slice(0, 2);
+const bar = () => js(`$('#pick-bar').is(':visible') ? $('#pick-bar .count').text() : 'hidden'`);
+await hold(...await at('Bravo'));
+check('holding a task picks it, with the bar, and no keyboard', [(await s()).picked, await bar(), (await s()).focus], ['Bravo', '1 selected', 'UL']);
+await tap(...await at('Delta'));
+check('a tap adds another', [(await s()).picked, await bar()], ['Bravo Delta', '2 selected']);
+await tap(...await at('Bravo'));
+check('a tap on a picked one takes it away', (await s()).picked, 'Delta');
+await tap(...await at('Charlie'));
+await tap(...await box(`$('#pick-bar [data-pick=tick]')[0]`).then(b => b.slice(0, 2)));
+await wait(200);
+check('Tick in the bar ticks them all, and the bar goes', [(await s()).order, await bar(), (await s()).picked], ['Alpha Bravo', 'hidden', '']);
+await key('z', ['meta']); await wait(200);
+check('...and undo brings them back', (await s()).order.split(' ').sort().join(' '), 'Alpha Bravo Charlie Delta');
+await js(`$('#message').hide(); true`);
+await tap(...await box(`$(${rowOf('Alpha')}).children('.more')[0]`).then(b => b.slice(0, 2)));
+check('Select is in the menu on a touch screen', await js(`$(${rowOf('Alpha')}).find('[data-move=select]').is(':visible')`), true);
+await tap(...await box(`$(${rowOf('Alpha')}).find('[data-move=select]')[0]`).then(b => b.slice(0, 2)));
+check('...and picks the task', [(await s()).picked, await bar()], ['Alpha', '1 selected']);
+await tap(...await box(`$('#pick-bar [data-pick=done]')[0]`).then(b => b.slice(0, 2)));
+check('Done stops picking', [(await s()).picked, await bar()], ['', 'hidden']);
+const before = (await s()).order.split(' ').filter(x => x !== 'Alpha');
+before.splice(before.indexOf('Charlie') + 1, 0, 'Alpha'); // where it should land
+const h = await box(`$(${rowOf('Alpha')}).children('.handle')[0]`), below = await box(rowOf('Charlie'));
+await touch('touchStart', h[0], h[1]);
+for (const y of [h[1] + 15, (h[1] + below[3]) / 2, below[3] - 3]) await touch('touchMove', h[0], y);
+await touch('touchEnd'); await wait(200);
+check('dragging by the handle with a finger moves the task', (await s()).order, before.join(' '));
+await cdp('Emulation.setTouchEmulationEnabled', { enabled: false });
+
 // ---- The website's sign-in is renewed on a key press near the end of its hour.
 // Last, as it loads the page again. Google's script is replaced by a fake.
 // (Marked as logged out, so the page doesn't try the made-up token on Google as it loads.)

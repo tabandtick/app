@@ -900,7 +900,7 @@ function taskRow(task, card) {
         $('<span class="pick"></span>').append('<button type="button" class="chip pick-date" aria-label="Pick a date"><svg class="icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="10" rx="2" stroke="currentColor" stroke-width="1.4" fill="none"/><path d="M2.5 7h11M5.5 2v3M10.5 2v3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span class="pick-label"></span></button>', due),
         '<button type="button" class="chip clear-due" aria-label="Clear date">&times;</button>')),
     $('<div class="menu" role="menu"></div>').append($.map([
-      ['details', 'Notes and due date'], ['subtask', 'Add a subtask'], ['indent', 'Make subtask'], ['outdent', 'Move out'],
+      ['select', 'Select'], ['details', 'Notes and due date'], ['subtask', 'Add a subtask'], ['indent', 'Make subtask'], ['outdent', 'Move out'],
       ['top', 'Move to top'], ['up', 'Move up'], ['down', 'Move down'], ['delete', 'Delete']
     ], function(item) {
       return $('<button type="button" role="menuitem"></button>').attr('data-move', item[0]).text(item[1]);

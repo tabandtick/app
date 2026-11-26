@@ -19,6 +19,8 @@ server or build step. Not made or endorsed by Google.
   several tasks picked, it ticks them all.
 - **Pasting several lines** makes a task of each.
 - **Coming back** to the tab after a while shows any changes made elsewhere.
+- **On a phone or tablet,** hold a task, or choose **Select** in its menu, to pick it; tap others
+  to add them, then **Tick** or **Delete** them from the bar at the bottom.
 - **Search** at the top, or **/**, shows only the tasks whose title or notes have every word.
   Moving and indenting wait until it's cleared.
 - **Enter** splits a row in two. **Backspace** at the start joins it to the row

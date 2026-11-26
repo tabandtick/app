@@ -1215,6 +1215,103 @@ dialog input:focus {
   }
 }
 
+/* Touch screens: bigger things to tap, and Select in each task's menu */
+.menu [data-move='select'] {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  ul.list li {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  ul.list input[type='checkbox'] {
+    width: 24px;
+    height: 24px;
+    margin: 0 8px 0 -2px;
+  }
+
+  .handle {
+    width: 22px;
+    font-size: 18px;
+  }
+
+  .claire li.unhide .handle {
+    visibility: visible; /* there's no hovering to show it */
+  }
+
+  .more {
+    width: 40px;
+    height: 32px;
+    margin: -4px 0;
+  }
+
+  .chip {
+    height: 36px;
+    padding: 0 14px;
+  }
+
+  #lists label,
+  #lists-toggle,
+  .new-task,
+  .menu button {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .menu [data-move='select'] {
+    display: block;
+  }
+
+  .claire .todo {
+    -webkit-touch-callout: none; /* holding a task picks it, rather than the phone's menu */
+  }
+}
+
+/* What to do with tasks picked by touch */
+#pick-bar {
+  display: none;
+  position: fixed;
+  z-index: 5;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  align-items: center;
+  gap: 4px;
+  padding: 6px 6px 6px 18px;
+  border-radius: 28px;
+  background: var(--toast);
+  color: var(--on-toast);
+  box-shadow: 0 8px 24px var(--shadow);
+  white-space: nowrap;
+}
+
+.touch-picking #pick-bar {
+  display: flex;
+}
+
+#pick-bar .count {
+  margin-right: 8px;
+  font-weight: 500;
+}
+
+#pick-bar button {
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 22px;
+  color: var(--toast-action);
+  font-weight: 600;
+}
+
+#pick-bar button:hover {
+  background: color-mix(in srgb, var(--on-toast) 12%, transparent);
+}
+
+.touch-picking #message {
+  bottom: 96px; /* above the bar */
+}
+
 @media (max-width: 600px) {
   #header {
     padding: 0 12px;
