@@ -1410,6 +1410,25 @@ dialog input:focus {
   .claire .todo {
     -webkit-touch-callout: none; /* holding a task picks it, rather than the phone's menu */
   }
+
+  /* iPhones zoom in on a text box with text under 16px, and an app on the home screen
+     stays zoomed in, cut off at both sides */
+  #search input,
+  ul.list .todo,
+  ul.list .notes,
+  ul.list .due,
+  dialog input {
+    font-size: 16px;
+  }
+}
+
+/* Clear of the iPhone's home bar, in an app on the home screen */
+#pick-bar {
+  margin-bottom: env(safe-area-inset-bottom);
+}
+
+#message {
+  margin-bottom: env(safe-area-inset-bottom);
 }
 
 /* What to do with tasks picked by touch */

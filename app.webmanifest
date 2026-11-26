@@ -1,0 +1,16 @@
+{
+  "id": "./",
+  "name": "Tab & Tick",
+  "short_name": "Tab & Tick",
+  "description": "A fast to-do list. Works with Google Tasks.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f8fafd",
+  "theme_color": "#f8fafd",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
