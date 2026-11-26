@@ -48,6 +48,10 @@ to delete anything once that time is up, or when the page closes.
 
 ## The extension
 
+Published on the Chrome Web Store as
+[Tab & Tick](https://chromewebstore.google.com/detail/tab-tick/amidicalcieolbecimlogomhnokopigp).
+The store package is made by `tools/build-store.py`. To work on it locally:
+
 1. Open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked**
    and pick this folder.
 2. `oauth2.client_id` in `manifest.json` must be an OAuth client of type **Chrome
