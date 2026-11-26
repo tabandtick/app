@@ -101,3 +101,9 @@ dashboard, before tagging.
 Google sign-in only works from addresses listed under "Authorised JavaScript
 origins" for the OAuth client in `auth.js`. Pushes to `main` are published by
 GitHub Pages.
+
+## Copyright
+
+Copyright © 2026 Tab & Tick. All rights reserved. The code is published so that anyone can
+see what the app does; it isn't licensed for reuse. The add-task icon is from Material
+Symbols, under its own licence in `icons/LICENSE-material-symbols.txt`.
