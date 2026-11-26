@@ -929,11 +929,19 @@ li.menu-open .menu {
   display: block;
 }
 
-.menu button {
+.menu button,
+.menu a {
   display: block;
   width: 100%;
   padding: 7px 12px;
+  border-radius: 8px;
+  color: inherit;
   text-align: left;
+  text-decoration: none;
+}
+
+.menu a:hover {
+  background: var(--hover);
 }
 
 .menu [data-move='delete'] {

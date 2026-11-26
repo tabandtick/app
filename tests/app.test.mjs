@@ -716,6 +716,10 @@ check('coming back reloads the lists and their tasks', [await js(`$('#cards .lis
   [['Test, renamed elsewhere', 'Other'], 'Alpha, changed elsewhere Bravo']);
 await js(`window.answerGet = null; true`);
 
+// ---- Help and rating, from the account menu
+check('the account menu links to help and to the store reviews', await js(`$('#account .menu a').map(function() { return $(this).text() + ' ' + this.href + ' ' + this.target; }).get()`),
+  ['Help and support https://tabandtick.github.io/support/ _blank', 'Rate Tab & Tick https://chromewebstore.google.com/detail/tab-tick/amidicalcieolbecimlogomhnokopigp/reviews _blank']);
+
 // ---- The keyboard shortcuts
 await js(`document.activeElement.blur(); true`);
 await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: '?', code: 'Slash', text: '?', modifiers: 8 });
