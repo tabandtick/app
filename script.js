@@ -452,6 +452,48 @@ function ask(options, done) {
 	else dialog.find('.cancel').focus();
 }
 
+// ---- The keyboard shortcuts, opened with ? or Cmd/Ctrl+/
+
+var SHORTCUTS = [
+	['Writing', [
+		[['Enter'], 'New task below, or the first subtask of one that has them'],
+		[['Backspace'], 'At the start: join to the task above, or delete an empty one'],
+		[['Delete'], 'At the end: join the next task on'],
+		[['Tab'], 'Make it a subtask, with any subtasks of its own'],
+		[['Shift', 'Tab'], 'Move it out, taking the subtasks below it'],
+		[['Cmd', ']'], 'Make a subtask, from anywhere in the title'],
+		[['Cmd', '['], 'Move out, from anywhere in the title'],
+		[['Alt', '\u2191'], 'Move up'], [['Alt', '\u2193'], 'Move down'],
+		[['Cmd', 'Enter'], 'Tick it, or reopen it'],
+		[['\u2191'], 'Previous task'], [['\u2193'], 'Next task'],
+		[['Cmd', 'Z'], 'Undo'],
+		[['Esc'], 'From notes or a date: back to the title']]],
+	['Several tasks', [
+		[['Shift', '\u2191'], 'Pick tasks in a run, upwards'], [['Shift', '\u2193'], 'Pick tasks in a run, downwards'],
+		[['Shift', 'Click'], 'Pick a run of tasks'],
+		[['Cmd', 'Click'], 'Pick or unpick one task'],
+		[['Backspace'], 'Delete the picked tasks'],
+		[['Cmd', 'Enter'], 'Tick them all'],
+		[['Tab'], 'Make them subtasks'], [['Alt', '\u2191'], 'Move them up'],
+		[['Cmd', 'C'], 'Copy their titles'], [['Cmd', 'X'], 'Cut them'],
+		[['Esc'], 'Back to typing']]],
+	['Anywhere', [
+		[['?'], 'These shortcuts, when not typing'], [['Cmd', '/'], 'These shortcuts']]]
+];
+
+function showShortcuts() {
+	var names = mac ? { Cmd: '\u2318', Alt: '\u2325', Shift: '\u21e7', Enter: '\u21a9' } : { Cmd: 'Ctrl' };
+	var dialog = $('#shortcuts');
+	dialog.find('.shortcut-groups').empty().append($.map(SHORTCUTS, function(group) {
+		return $('<section></section>').append($('<h3></h3>').text(group[0]), $('<dl></dl>').append($.map(group[1], function(item) {
+			return [$('<dt></dt>').append($.map(item[0], function(k) { return $('<kbd></kbd>').text(names[k] || k)[0]; })), $('<dd></dd>').text(item[1])];
+		})));
+	}));
+	closeMenu();
+	dialog[0].showModal();
+	dialog.find('.close').focus();
+}
+
 function askNewList() {
 	ask({ title: 'New list', field: '', placeholder: 'Name', button: 'Create' }, createList);
 }
@@ -473,19 +515,29 @@ function dropPlace(x, y, dx) {
 		var box = this.getBoundingClientRect();
 		return box.top + box.height / 2 < y;
 	}).length;
-	if (drag.family || other) while (i < rows.length && rows.eq(i).hasClass('subtask')) i++; // stay out of another family
+	// Several tasks with subtasks of their own stay at the top level; one can be
+	// nested, and its subtasks come too, as Tab does
+	var whole = drag.family && drag.picked;
+	if (whole || other) while (i < rows.length && rows.eq(i).hasClass('subtask')) i++; // stay out of another family
 	var above = rows.eq(i - 1), below = rows.eq(i);
 	if (i === 0) above = $();
 	var level = drag.level + (dx > 24 ? 1 : dx < -24 ? -1 : 0);
-	if (below.hasClass('subtask')) level = 1; // between a task and its subtasks
-	if (drag.family || !above.length || other) level = 0;
+	var adopt = $();
+	if (below.hasClass('subtask')) {
+		// Dragged out to the left among subtasks: the ones below become its own, as
+		// Shift+Tab does. Otherwise it joins them.
+		if (dx < -24 && drag.level === 1 && !drag.picked && !other) adopt = below.add(below.nextUntil('li:not(.subtask)'));
+		else level = 1;
+	}
+	if (whole || !above.length || other) level = 0;
+	if (level > 0) adopt = $();
 	var todo = above.children('.todo');
 	var parent = level > 0 ? (above.hasClass('subtask') ? todo[0].parentTask : taskKey(todo[0])) : undefined;
 	var list = card.find('.claire')[0].getBoundingClientRect();
 	var box = below[0] || above[0] ? (below[0] || above[0]).getBoundingClientRect() : list;
 	// The task it goes after in another list: the nearest open one that isn't a subtask
 	var after = above.add(above.prevAll()).not('.subtask').children('.todo[id]').not('.checked').last().attr('id');
-	return { card: card, other: other, below: below, parent: parent, after: after, top: below.length || !above.length ? box.top : box.bottom, left: list.left, right: list.right };
+	return { card: card, other: other, below: below, parent: parent, after: after, adopt: adopt, top: below.length || !above.length ? box.top : box.bottom, left: list.left, right: list.right };
 }
 
 function dragMove(event) {
@@ -520,7 +572,29 @@ function dragEnd(event) {
 		}
 	}
 	else if (d.place.other) moveToList(d.todo, d.place.card[0].list, d.place.after);
-	else place(d.todo, d.place.below, d.place.parent);
+	else dropOne(d.todo, d.place);
+}
+
+// Put one dragged task where it was dropped, with what Tab or Shift+Tab would do
+// to the subtasks around it.
+function dropOne(todo, p) {
+	var own = subtaskRows(todo);
+	if (p.parent && own.length) { // nested, with its own subtasks: they go under the new parent too
+		if (own.children('.todo.checked').length) {
+			return showMessage('That task has completed subtasks, so it can\u2019t become one.', null, null, 4000);
+		}
+		asOneUndo(function() { // its subtasks first: Google won't put a task that has some under another
+			own.each(function() { place($(this).children('.todo'), p.below, p.parent); });
+			place(todo, own.first(), p.parent);
+		});
+	} else if (p.adopt.length) { // out among its old family: the subtasks below become its own
+		var open = p.adopt.filter(function() { return !$(this).children('.todo').hasClass('checked'); });
+		asOneUndo(function() {
+			place(todo, p.below, undefined);
+			todo.parent().before(p.adopt.not(open)); // Google won't put a completed task under another
+			open.each(function() { place($(this).children('.todo'), $(this).next(), taskKey(todo[0])); });
+		});
+	} else place(todo, p.below, p.parent);
 }
 
 document.addEventListener('pointerdown', function(event) {
@@ -693,6 +767,17 @@ $(document).ready(function() {
 	});
 	$('#new-list').click(askNewList);
 	$('#dialog .cancel').click(function() { $('#dialog')[0].close(); });
+	$('#shortcuts .close').click(function() { $('#shortcuts')[0].close(); });
+	$('#shortcuts-button').click(showShortcuts);
+	document.addEventListener('keydown', function(event) {
+		var typing = $(event.target).is('input:not([type=checkbox]), textarea, [contenteditable]');
+		var slash = event.key === '/' && (mac ? event.metaKey : event.ctrlKey);
+		if ((event.key === '?' && !typing && !event.metaKey && !event.ctrlKey) || slash) {
+			if ($('dialog[open]').length) return;
+			event.preventDefault();
+			showShortcuts();
+		}
+	});
 	$('#log-out-button').click(function() {
 		closeMenu();
 		logOut();
@@ -715,6 +800,12 @@ $(document).ready(function() {
 	document.addEventListener('keydown', pickingKey);
 	document.addEventListener('copy', copyPicked);
 	document.addEventListener('cut', copyPicked);
+
+	// On the website, the sign-in is renewed on a click or a key near the end of its hour
+	if (auth.renew) {
+		document.addEventListener('pointerdown', function() { auth.renew(); }, true);
+		document.addEventListener('keydown', function() { auth.renew(); }, true);
+	}
 
 	// Back after a while, from another tab or window: show what changed meanwhile
 	var away = 0;

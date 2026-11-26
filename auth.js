@@ -3,6 +3,7 @@
 //   silent(done)   sign in without asking      login(done)  ask if need be
 //   expired(done)  replace a refused token     token()      the token, or null
 //   logout()       forget the token
+// and, on the website, renew() and hint(email): see below.
 // done is called with true or false, and the reason if false.
 
 var SCOPE = 'https://www.googleapis.com/auth/tasks';
@@ -74,12 +75,17 @@ function webAuth() {
   };
   document.head.appendChild(script);
 
+  var hint = ''; // the account's email, so renewing doesn't ask which account
+  var renewing = false;
+
   function login(done, choose, blocked) {
     if (blocked || waiting.failed) return done(false, 'Google\u2019s sign-in script was blocked');
+    if (!ready && window.google && google.accounts) ready = true;
     if (!ready) return waiting.push(function(blocked) { login(done, choose, blocked); });
     google.accounts.oauth2.initTokenClient({
       client_id: CLIENT_ID,
       scope: SCOPES,
+      hint: choose ? '' : hint,
       callback: function(response) {
         if (response.error) return done(false, response.error);
         if (!google.accounts.oauth2.hasGrantedAllScopes(response, SCOPE)) return done(false, 'access to tasks wasn\u2019t ticked');
@@ -98,7 +104,16 @@ function webAuth() {
       done(false, 'expired');
     },
     token: token,
-    logout: function() { keep(null); }
+    logout: function() { keep(null); },
+    // The token lasts an hour. Google's window can only open on a click or a key, so
+    // in its last few minutes the next one renews it. Having agreed before, you
+    // aren't asked again: the window closes by itself.
+    renew: function() {
+      if (renewing || !saved || !token() || saved.until - Date.now() > 5 * 60 * 1000) return;
+      renewing = true;
+      login(function() { renewing = false; }, false);
+    },
+    hint: function(email) { hint = email || ''; }
   };
 }
 

@@ -625,6 +625,30 @@ check('Move to Other takes both, last first', [(await s()).order, await js('sent
   ['Charlie -Sub Delta', ['lists/L1/tasks/b/move?destinationTasklist=L2', 'lists/L1/tasks/a/move?destinationTasklist=L2']]);
 check('message', await js(`$('#message').text()`), 'Moved 2 tasks to Other. Undo');
 
+// ---- Dragging does what Tab and Shift+Tab do with subtasks
+
+await reset([{ id: 'g1', title: 'Ann', position: '1' }, { id: 'g2', title: 'Ben', position: '2' },
+  { id: 'g3', title: 'Bea', parent: 'g2', position: '1' }, { id: 'g4', title: 'Bo', parent: 'g2', position: '2' }, { id: 'g5', title: 'Cy', position: '3' }]);
+await js(`serverErrors = []; $('#message').hide(); true`);
+let ann = await box(rowOf('Ann'));
+await dragPicked('Ben', ann[3] - 2, 40);
+check('dragging a task with subtasks under another: they all go under it, as Tab does', (await s()).order, 'Ann -Ben -Bea -Bo Cy');
+await googleMatches('drag a family in');
+await key('z', ['meta']);
+check('one undo', (await s()).order, 'Ann Ben -Bea -Bo Cy');
+await googleMatches('undo the drag');
+
+await reset([{ id: 'h1', title: 'Pa', position: '1' }, { id: 'h2', title: 'S1', parent: 'h1', position: '1' },
+  { id: 'h3', title: 'S2', parent: 'h1', position: '2' }, { id: 'h4', title: 'S3', parent: 'h1', position: '3' }, { id: 'h5', title: 'Qu', position: '2' }]);
+await js(`serverErrors = []; true`);
+let s2 = await box(rowOf('S2'));
+await dragPicked('S2', s2[1], -40);
+check('dragging a subtask out to the left: the ones below become its own, as Shift+Tab does', (await s()).order, 'Pa -S1 S2 -S3 Qu');
+await googleMatches('drag a subtask out');
+let s1 = await box(rowOf('S1'));
+await dragPicked('S1', s1[1], 0);
+check('dragging a subtask without moving left leaves it where it was', (await s()).order, 'Pa -S1 S2 -S3 Qu');
+
 // ---- Pasting several lines, Cmd/Ctrl+Enter, and refreshing on coming back
 
 await reset([{ id: 'p1', title: 'Alpha', position: '1' }, { id: 'p2', title: 'Bravo', position: '2' }]);
@@ -680,6 +704,40 @@ await wait(800);
 check('coming back reloads the lists and their tasks', [await js(`$('#cards .list-title').map(function() { return this.value; }).get()`), (await s()).order],
   [['Test, renamed elsewhere', 'Other'], 'Alpha, changed elsewhere Bravo']);
 await js(`window.answerGet = null; true`);
+
+// ---- The keyboard shortcuts
+await js(`document.activeElement.blur(); true`);
+await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: '?', code: 'Slash', text: '?', modifiers: 8 });
+await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: '?', code: 'Slash', modifiers: 8 });
+await wait(100);
+check('? opens the keyboard shortcuts', await js(`$('#shortcuts').prop('open') && $('#shortcuts kbd').length > 20`), true);
+await key('Escape');
+check('Escape closes them', await js(`$('#shortcuts').prop('open')`), false);
+await caretIn('Alpha, changed elsewhere', -1);
+await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: '?', code: 'Slash', text: '?', modifiers: 8 });
+await wait(100);
+check('...but ? while typing is just a question mark', [await js(`$('#shortcuts').prop('open')`), await js(`document.activeElement.value`)], [false, 'Alpha, changed elsewhere?']);
+
+// ---- The website's sign-in is renewed on a key press near the end of its hour.
+// Last, as it loads the page again. Google's script is replaced by a fake.
+// (Marked as logged out, so the page doesn't try the made-up token on Google as it loads.)
+await js(`sessionStorage.setItem('tabandtick-token', JSON.stringify({ token: 'old', until: Date.now() + 60000 }));
+  localStorage.setItem('tabandtick-logged-out', '1'); true`);
+await cdp('Page.navigate', { url: base + 'index.html' });
+await wait(1500);
+await js(`window.calls = [];
+  window.google = { accounts: { oauth2: {
+    hasGrantedAllScopes: function() { return true; },
+    initTokenClient: function(config) {
+      calls.push('hint:' + config.hint);
+      return { requestAccessToken: function(options) { calls.push('prompt:' + options.prompt); config.callback({ access_token: 'new', expires_in: 3600 }); } };
+    } } } };
+  localStorage.removeItem('tabandtick-logged-out'); auth.hint('alex@example.com'); true`);
+await key('Escape');
+check('a key in the last minutes renews the sign-in, for the same account, without asking', [await js('calls'), await js('auth.token()')],
+  [['hint:alex@example.com', 'prompt:'], 'new']);
+await key('Escape');
+check('...and not again while the new one is fresh', await js('calls.length'), 2);
 
 const errors = await js(`window.__errors || []`);
 console.log(failures ? failures + ' failed' : 'all passed');

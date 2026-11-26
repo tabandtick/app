@@ -434,7 +434,11 @@ function loadProfile() {
   fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { 'Authorization': 'Bearer ' + token } })
     .then(function(response) { return response.ok ? response.json() : null; })
     .catch(function() { return null; })
-    .then(function(profile) { if (started === session) showProfile(profile); });
+    .then(function(profile) {
+      if (started !== session) return;
+      showProfile(profile);
+      if (auth.hint && profile) auth.hint(profile.email);
+    });
 }
 
 function showProfile(profile) {

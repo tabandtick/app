@@ -35,6 +35,8 @@ server or build step. Not made or endorsed by Google.
   card renames, hides or deletes it, and a task's menu, or dragging, moves it to
   another list.
 
+**?** or **Cmd/Ctrl+/** shows all the keyboard shortcuts, as does the account menu.
+
 **Cmd/Ctrl+Z** undoes completing, moving, indenting and splitting, and deleting and
 joining within 7 seconds. If you have typed since, it undoes typing instead. Google is only told
 to delete anything once that time is up, or when the page closes.
@@ -44,8 +46,9 @@ to delete anything once that time is up, or when the page closes.
 - Stars, repeats, deadlines, times of day, attachments and reminders aren't in
   Google's API. Tasks assigned from Docs or Chat aren't shown.
 - A task with subtasks can't be moved to another list.
-- The website asks you to log in about once an hour, and in each new browser tab.
-  The extension doesn't.
+- On the website, Google's sign-in lasts an hour. In its last five minutes, your next
+  click or key renews it: a Google window may open and close by itself. Left alone for
+  longer, or in a new browser tab, it asks you to log in. The extension doesn't.
 
 ## Files
 
