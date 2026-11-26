@@ -729,6 +729,35 @@ await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: '?', code: 'Slash', 
 await wait(100);
 check('...but ? while typing is just a question mark', [await js(`$('#shortcuts').prop('open')`), await js(`document.activeElement.value`)], [false, 'Alpha, changed elsewhere?']);
 
+// ---- Search
+await reset([{ id: 's1', title: 'Alpha', position: '1' }, { id: 's2', title: 'Bravo', position: '2' },
+  { id: 's3', title: 'Buy milk', parent: 's2', position: '1' }, { id: 's4', title: 'Bake bread', parent: 's2', position: '2' },
+  { id: 's5', title: 'Charlie', position: '3', notes: 'Oat milk, not cow' }, { id: 's6', title: 'Delta', position: '4' }]);
+await js(`$('#message').hide(); document.activeElement.blur(); $('body').addClass('signed-in'); true`);
+const visible = () => js(`$('#cards .card').first().find('.claire > li:not(.no-match)').map(function() { return ($(this).hasClass('subtask') ? '-' : '') + $(this).children('.todo').val(); }).get().join(' ')`);
+await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: '/', code: 'Slash', text: '/' });
+await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: '/', code: 'Slash' });
+await wait(80);
+check('/ goes to the search box', await js(`document.activeElement === $('#search input')[0]`), true);
+await type('milk'); await wait(300);
+check('only matching tasks show; a matching subtask keeps its task; notes count', await visible(), 'Bravo -Buy milk Charlie');
+check('...and how many is said', await js(`$('#announce').text()`), '3 tasks match');
+await type(' oat'); await wait(300);
+check('every word has to match', await visible(), 'Charlie');
+await key('Enter');
+check('Enter goes to the first match', (await s()).focus, 'TEXTAREA:Charlie');
+await key('Tab');
+check('moving waits for the search to be cleared', [await visible(), await js(`$('#message').text().trim()`)], ['Charlie', 'Clear the search to move or indent tasks.']);
+await js(`$('#search input').val('a'); applySearch(); true`);
+await caretIn('Alpha', -1);
+await key('ArrowDown', ['shift']);
+check('picking skips hidden tasks', [await visible(), (await s()).picked], ['Alpha Bravo -Bake bread Charlie Delta', 'Alpha Bravo']);
+await key('Escape');
+await js(`$('#search input').focus().val('zebra'); applySearch(); true`);
+check('a list with no matches says so', [await visible(), await js(`$('#cards .card').first().find('.no-matches').is(':visible')`)], ['', true]);
+await key('Escape');
+check('Escape clears the search and shows everything', [await visible(), await js(`$('#search input').val()`)], ['Alpha Bravo -Buy milk -Bake bread Charlie Delta', '']);
+
 // ---- What screen readers are told
 await reset([{ id: 'r1', title: 'Plan the party', position: '1' }, { id: 'r2', title: 'Order the cake', position: '2', due: dayIso(1) },
   { id: 'r3', title: 'Send the invites', position: '3' }]);

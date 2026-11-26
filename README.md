@@ -19,6 +19,8 @@ server or build step. Not made or endorsed by Google.
   several tasks picked, it ticks them all.
 - **Pasting several lines** makes a task of each.
 - **Coming back** to the tab after a while shows any changes made elsewhere.
+- **Search** at the top, or **/**, shows only the tasks whose title or notes have every word.
+  Moving and indenting wait until it's cleared.
 - **Enter** splits a row in two. **Backspace** at the start joins it to the row
   above, and **Delete** at the end joins the next one to it.
 - **Drag the handle** to move a task: right to make it a subtask, left to move out.

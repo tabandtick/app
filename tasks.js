@@ -549,6 +549,7 @@ function loadTicked(card) {
 }
 
 function refreshRows() {
+  if (searchWords().length) applySearch(); // rows made or moved since
   autosizeAll();
   updateToDoCount();
   toggleToDoCheckboxes();
@@ -1411,6 +1412,10 @@ function moveOutTicked(todo) {
 
 function moveRow(todo, how) {
   var row = todo.parent();
+  if (searchWords().length && how !== 'subtask') { // the tasks it would move past may be hidden
+    showMessage('Clear the search to move or indent tasks.', null, null, 4000);
+    return true;
+  }
   if (how === 'outdent' && todo.hasClass('checked') && row.hasClass('subtask')) return moveOutTicked(todo);
   if (!row.parent().is('.claire') || todo.hasClass('checked')) return;
   var sub = row.hasClass('subtask');

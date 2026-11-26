@@ -135,7 +135,8 @@ function keydown(event) {
 	var caret = el.selectionEnd === position; // nothing selected
 	var modified = event.shiftKey || event.metaKey || event.altKey || event.ctrlKey;
 	var completed = row.parent().is('.done-list');
-	var previous = row.prev().children('.todo'), next = row.next().children('.todo');
+	var previous = row.prevAll('li:not(.no-match)').first().children('.todo'), next = row.nextAll('li:not(.no-match)').first().children('.todo');
+	var searching = $('body').hasClass('searching');
 	var wrapped = el.clientHeight > 1.5 * parseFloat($(el).css('line-height'));
 
 	var code = event.which || event.keyCode;
@@ -197,7 +198,11 @@ function keydown(event) {
 
 		case 8: //backspace
 			if (position !== 0 || !caret) break;
-			if (previous.length) {
+			if (previous.length && searching && length) {
+				event.preventDefault();
+				showMessage('Clear the search to join tasks.', null, null, 4000);
+			}
+			else if (previous.length) {
 				event.preventDefault();
 				mergeRows(previous, todo);
 			}
@@ -212,7 +217,8 @@ function keydown(event) {
 		case 46: //delete
 			if (position !== length || !caret || !next.length) break;
 			event.preventDefault();
-			mergeRows(todo, next);
+			if (searching && next.val()) showMessage('Clear the search to join tasks.', null, null, 4000);
+			else mergeRows(todo, next);
 		break;
 
 		case 40: //down arrow
@@ -245,7 +251,7 @@ function pickedSet() {
 	var a = rows.index(picked.anchor), b = rows.index(picked.head);
 	if (a < 0 || b < 0) picked.anchor = picked.head = null; // refreshed, or moved away
 	var range = picked.anchor ? rows.slice(Math.min(a, b), Math.max(a, b) + 1) : $();
-	return rows.filter(function() { return $.inArray(this, picked.base) >= 0; }).add(range);
+	return rows.filter(function() { return $.inArray(this, picked.base) >= 0; }).add(range).not('.no-match'); // never hidden ones
 }
 
 function pickedRows() {
@@ -420,6 +426,36 @@ function copyPicked(event) {
 	if (event.type === 'cut') deletePicked();
 }
 
+// ---- Search. Tasks whose title and notes don't hold every word are hidden; a
+// matching subtask keeps its task, and new and focused rows always show.
+// Moving, indenting and joining wait until the search is cleared.
+
+function searchWords() {
+	return $.trim($('#search input').val() || '').toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function applySearch(say) {
+	var words = searchWords();
+	$('body').toggleClass('searching', words.length > 0);
+	$('#cards .card').each(function() {
+		var card = $(this);
+		card.find('ul.list > li').each(function() {
+			var el = $(this).children('.todo')[0];
+			var text = (el.value + ' ' + $(this).find('.notes').val()).toLowerCase();
+			var keep = !words.length || !el.id || el === document.activeElement || words.every(function(w) { return text.indexOf(w) >= 0; });
+			$(this).toggleClass('no-match', !keep);
+		});
+		card.find('ul.list > li.subtask:not(.no-match)').each(function() {
+			byKey($(this).children('.todo')[0].parentTask).parent().removeClass('no-match');
+		});
+		card.find('.no-matches').toggle(words.length > 0 && !card.find('ul.list > li:not(.no-match)').length);
+	});
+	if (say && words.length) { // only when typed, not each time rows change
+		var n = $('ul.list > li:not(.no-match)').length;
+		announce(n ? n + (n === 1 ? ' task matches' : ' tasks match') : 'No matching tasks');
+	}
+}
+
 // Tell screen readers what just happened, when nothing they read would say so
 function announce(text) {
 	var box = $('#announce');
@@ -507,6 +543,8 @@ var SHORTCUTS = [
 		[['Cmd', 'C'], 'Copy their titles'], [['Cmd', 'X'], 'Cut them'],
 		[['Esc'], 'Back to typing']]],
 	['Anywhere', [
+		[['/'], 'Search tasks, when not typing'],
+		[['Esc'], 'In the search: clear it'],
 		[['?'], 'These shortcuts, when not typing'], [['Cmd', '/'], 'These shortcuts']]]
 ];
 
@@ -630,6 +668,7 @@ document.addEventListener('pointerdown', function(event) {
 	var handle = $(event.target).closest('.claire .handle');
 	if (!handle.length || event.button || drag || handle.siblings('.todo').hasClass('checked')) return;
 	event.preventDefault(); // no text selection
+	if ($('body').hasClass('searching')) return showMessage('Clear the search to move tasks.', null, null, 4000);
 	var row = handle.parent(), todo = row.children('.todo');
 	drag = { todo: todo, card: todo[0].card, rows: row.add(subtaskRows(todo)), x: event.clientX, y: event.clientY, level: row.hasClass('subtask') ? 1 : 0 };
 	if (isPicked(row)) { // all of them, and their subtasks
@@ -797,6 +836,31 @@ $(document).ready(function() {
 	$('#new-list').click(askNewList);
 	$('#dialog .cancel').click(function() { $('#dialog')[0].close(); });
 	$('#shortcuts .close').click(function() { $('#shortcuts')[0].close(); });
+	var searchTimer;
+	$('#search input').on('input', function() {
+		clearTimeout(searchTimer);
+		searchTimer = setTimeout(function() { applySearch(true); }, 120);
+	}).on('keydown', function(event) {
+		if (event.key === 'Escape') {
+			event.stopPropagation();
+			$(this).val('');
+			applySearch();
+			this.blur();
+		} else if (event.key === 'Enter') { // to the first match
+			event.preventDefault();
+			clearTimeout(searchTimer);
+			applySearch();
+			var first = $('#cards .claire > li:not(.no-match)').first().children('.todo');
+			if (first.length) first.setCursorPosition(first.val().length);
+		}
+	});
+	document.addEventListener('keydown', function(event) {
+		var typing = $(event.target).is('input:not([type=checkbox]), textarea, [contenteditable]');
+		if (event.key === '/' && !typing && !event.metaKey && !event.ctrlKey && !event.altKey && $('body').hasClass('signed-in') && !$('dialog[open]').length) {
+			event.preventDefault();
+			$('#search input').focus().select();
+		}
+	});
 	$('#shortcuts-button').click(showShortcuts);
 	document.addEventListener('keydown', function(event) {
 		var typing = $(event.target).is('input:not([type=checkbox]), textarea, [contenteditable]');
