@@ -413,7 +413,7 @@ function withDrive(then) {
 
 function askSharedList() {
   withDrive(function() {
-    ask({ title: 'New shared list', text: 'Share it with anyone with a Google account. It’s kept in your Google Drive.', field: '', placeholder: 'Name', button: 'Create' }, function(title) {
+    ask({ title: 'New shared list', text: 'Share it with anyone with a Google account. It’s kept in your Google Drive.', field: '', placeholder: 'List name', button: 'Create' }, function(title) {
       shared.create(title, [], function(list) {
         addShared(list);
         shareList(list.id);
