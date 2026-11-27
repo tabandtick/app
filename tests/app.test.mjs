@@ -858,12 +858,16 @@ await js(`tickPause = 400; closeTime = 150; $(${rowOf('Alpha')}).children('input
 await wait(100);
 const ticking = () => js(`(function() {
   var row = $('.todo').filter(function() { return this.value === 'Alpha'; }).parent();
+  var below = $('.todo').filter(function() { return this.value === 'Bravo'; }).parent();
   return { where: row.parent().is('.claire') ? 'open' : 'completed', struck: getComputedStyle(row.children('.todo')[0]).textDecorationLine,
-    ticked: row.children('input[type=checkbox]').prop('checked'), squashed: row[0].offsetHeight < 20 };
+    ticked: row.children('input[type=checkbox]').prop('checked'), height: Math.round(row[0].getBoundingClientRect().height),
+    belowGap: Math.round(below[0].getBoundingClientRect().top - row[0].getBoundingClientRect().top) };
 })()`);
-check('just ticked: still in place, ticked, not struck through', await ticking(), { where: 'open', struck: 'none', ticked: true, squashed: false });
-await wait(420);
-check('...then its row closes up', (await ticking()).squashed, true);
+const tickBefore = await ticking();
+check('just ticked: still in place, ticked, not struck through', [tickBefore.where, tickBefore.struck, tickBefore.ticked], ['open', 'none', true]);
+await wait(390);
+const tickMid = await ticking();
+check('...then the task below slides up over it, which keeps its size', [tickMid.belowGap < tickBefore.belowGap && tickMid.belowGap > 0, tickMid.height === tickBefore.height], [true, true]);
 await wait(300);
 check('...and it goes to Completed', (await ticking()).where, 'completed');
 await reset([{ id: 'k3', title: 'Alpha', position: '1' }, { id: 'k4', title: 'Bravo', position: '2' }]);

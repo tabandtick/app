@@ -1056,26 +1056,35 @@ function sortDone(card) {
 // a ticked subtask stays with its open parent.
 var ticking = 0; // ticks Google hasn't answered yet
 
-// As in Google Tasks: a ticked task stays a moment, ticked but not struck through,
-// then its row closes up and the tasks below slide into its place. (Measured there:
-// about 400ms, then 150ms.) Tests set these to 0.
+// As in Google Tasks (measured there): a ticked task stays a moment, ticked but not
+// struck through. Then the tasks below slide up over it, 150ms with ease, and it goes
+// to Completed. It doesn't shrink or fade: it's covered. Tests set these to 0.
 var tickPause = 400, closeTime = 150;
 
-// Close the row up, then do the move. Not if it was unticked again in the meantime.
 function closeThenMove(row, checkbox, done, move) {
   var wait = Math.max(0, tickPause - (Date.now() - (row[0].tickedAt || 0)));
   var still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var block = row.add(row.hasClass('subtask') ? $() : subtaskRows(row.children('.todo')));
+  var over = $();
   setTimeout(function() {
     if (checkbox.prop('checked') !== done || !$.contains(document, row[0])) return row.removeClass('leaving');
     if (still || !closeTime) return finish();
-    row.css({ height: row[0].offsetHeight + 'px', overflow: 'hidden' });
-    row[0].offsetHeight; // so the change below is animated
-    row.css({ height: 0, paddingTop: 0, paddingBottom: 0, transition: 'height ' + closeTime + 'ms ease, padding ' + closeTime + 'ms ease' });
+    // Everything after it in the card slides up over it, on the card's colour
+    over = block.last().nextAll().add(row.parent().nextAll()).add(row.closest('.claire').nextAll(':visible'));
+    over.addClass('covering');
+    block.addClass('covered');
+    var height = block.get().reduce(function(sum, el) { return sum + el.getBoundingClientRect().height; }, 0);
+    var last = block.last();
+    var margin = parseFloat(last.css('margin-bottom')) || 0;
+    last[0].offsetHeight; // so the change below is animated
+    last.css({ transition: 'margin-bottom ' + closeTime + 'ms ease', marginBottom: (margin - height) + 'px' });
     setTimeout(finish, closeTime);
   }, wait);
   function finish() {
-    row.removeClass('leaving').css({ height: '', overflow: '', paddingTop: '', paddingBottom: '', transition: '' });
+    over.removeClass('covering');
+    block.removeClass('covered leaving').css({ transition: '', marginBottom: '' });
     if (checkbox.prop('checked') === done) move();
+    renderMeta(row);
     refreshRows();
   }
 }
@@ -1378,7 +1387,7 @@ function dayName(due) {
 function renderMeta(row) {
   var values = current(row.children('.todo'));
   var overdue = values.due && values.due < isoDay(new Date()) && !row.children('input[type=checkbox]').prop('checked');
-  var completedAt = row.children('.todo')[0].completedAt;
+  var completedAt = !row.hasClass('leaving') && row.children('.todo')[0].completedAt; // not until it's in Completed
   var when = completedAt ? 'Completed: ' + dayName(isoDay(new Date(completedAt)))
     : values.due ? (overdue ? 'Overdue: ' : '') + dayName(values.due) : '';
   row.find('.when').text(when).toggleClass('overdue', !!overdue);
