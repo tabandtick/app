@@ -588,7 +588,7 @@ function showShortcuts() {
 }
 
 function askNewList() {
-	ask({ title: 'New list', field: '', placeholder: 'Name', button: 'Create' }, createList);
+	ask({ title: 'New list', field: '', placeholder: 'List name', button: 'Create' }, createList);
 }
 
 // ---- Dragging. A line shows where the row will land; moving right or left makes
