@@ -66,9 +66,11 @@ to delete anything once that time is up, or when the page closes.
 - Stars, repeats, deadlines, times of day, attachments and reminders aren't in
   Google's API. Tasks assigned from Docs or Chat aren't shown.
 - A task with subtasks can't be moved to another list.
-- On the website, Google's sign-in lasts an hour. In its last five minutes, your next
-  click or key renews it: a Google window may open and close by itself. Left alone for
-  longer, or in a new browser tab, it asks you to log in. The extension doesn't.
+- On the website, Google's sign-in lasts an hour, and Google gives a website no way to
+  renew it without a click. In its last five minutes, or once it has run out, your next
+  click or key renews it: a Google window opens and closes by itself. It's kept in the
+  browser, so closing the tab doesn't log you out. The extension stays signed in, as
+  Chrome looks after it.
 
 ## Files
 

@@ -51,8 +51,9 @@ function extensionAuth() {
   };
 }
 
-// Google's token lasts about an hour. It is kept in this tab's session storage so
-// that a refresh doesn't log you out; closing the tab forgets it.
+// Google gives a website a token that lasts an hour, and no way to renew it without a
+// click. It's kept in the browser, so that closing the tab or a refresh doesn't log you
+// out, and the next click or key once it's nearly or quite gone renews it: see renew().
 function webAuth() {
   var KEY = 'tabandtick-token';
   var TOKENS = 'tabandtick-tokens'; // each account's, by email, to switch back without asking
@@ -63,15 +64,15 @@ function webAuth() {
   var DRIVE_KEY = 'tabandtick-drive:'; // and the email: set once that account has let it use Drive
 
   try {
-    saved = JSON.parse(sessionStorage.getItem(KEY));
-    tokens = JSON.parse(sessionStorage.getItem(TOKENS)) || {};
+    saved = JSON.parse(localStorage.getItem(KEY));
+    tokens = JSON.parse(localStorage.getItem(TOKENS)) || {};
   } catch (e) { /* storage is blocked, or not ours */ }
 
   function keep(value) {
     saved = value;
     try {
-      if (value) sessionStorage.setItem(KEY, JSON.stringify(value));
-      else sessionStorage.removeItem(KEY);
+      if (value) localStorage.setItem(KEY, JSON.stringify(value));
+      else localStorage.removeItem(KEY);
     } catch (e) { /* storage is blocked */ }
     if (value && hint) {
       tokens[hint] = value;
@@ -80,7 +81,7 @@ function webAuth() {
   }
 
   function keepTokens() {
-    try { sessionStorage.setItem(TOKENS, JSON.stringify(tokens)); } catch (e) { /* storage is blocked */ }
+    try { localStorage.setItem(TOKENS, JSON.stringify(tokens)); } catch (e) { /* storage is blocked */ }
   }
 
   function token() {
@@ -137,8 +138,8 @@ function webAuth() {
   return {
     silent: function(done) { done(!!token(), 'no token'); },
     login: function(done, choose) { login(done, choose); },
-    expired: function(done) { // a new token needs a click
-      keep(null);
+    expired: function(done) { // a new token needs a click: see renew()
+      if (saved) keep($.extend({}, saved, { until: 0 }));
       done(false, 'expired');
     },
     token: token,
@@ -193,12 +194,15 @@ function webAuth() {
       }, false);
     },
     // The token lasts an hour. Google's window can only open on a click or a key, so
-    // in its last few minutes the next one renews it. Having agreed before, you
-    // aren't asked again: the window closes by itself.
-    renew: function() {
-      if (renewing || !saved || !token() || saved.until - Date.now() > 5 * 60 * 1000) return;
+    // in its last few minutes, or once it has gone, the next one renews it. Having
+    // agreed before, you aren't asked again: the window closes by itself. done(ok).
+    renew: function(done) {
+      if (renewing || !saved || !hint || saved.until - Date.now() > 5 * 60 * 1000) return;
       renewing = true;
-      login(function() { renewing = false; }, false);
+      login(function(ok) {
+        renewing = false;
+        if (done) done(ok);
+      }, false);
     },
     hint: function(email) { hint = email || ''; }
   };

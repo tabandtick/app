@@ -1004,8 +1004,15 @@ $(document).ready(function() {
 
 	// On the website, the sign-in is renewed on a click or a key near the end of its hour
 	if (auth.renew) {
-		document.addEventListener('pointerdown', function() { auth.renew(); }, true);
-		document.addEventListener('keydown', function() { auth.renew(); }, true);
+		var renewed = function(ok) {
+			if (!ok || loggedOut()) return;
+			if ($('#message button').text() === 'Log in') hideMessage(); // asked to, when it ran out
+			handleAuthResult(true); // saves what couldn't be, or loads your lists
+		};
+		document.addEventListener('pointerdown', function(event) {
+			if (!$(event.target).closest('#authorize-button').length) auth.renew(renewed); // that logs in itself
+		}, true);
+		document.addEventListener('keydown', function() { auth.renew(renewed); }, true);
 	}
 
 	// Back after a while, from another tab or window: show what changed meanwhile

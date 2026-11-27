@@ -830,7 +830,7 @@ await cdp('Emulation.setTouchEmulationEnabled', { enabled: false });
 // ---- The website's sign-in is renewed on a key press near the end of its hour.
 // Last, as it loads the page again. Google's script is replaced by a fake.
 // (Marked as logged out, so the page doesn't try the made-up token on Google as it loads.)
-await js(`sessionStorage.setItem('tabandtick-token', JSON.stringify({ token: 'old', until: Date.now() + 60000 }));
+await js(`localStorage.setItem('tabandtick-token', JSON.stringify({ token: 'old', until: Date.now() + 60000 }));
   localStorage.setItem('tabandtick-logged-out', '1'); true`);
 await cdp('Page.navigate', { url: base + 'index.html' });
 await wait(1500);
@@ -850,7 +850,7 @@ check('...and not again while the new one is fresh', await js('calls.length'), 2
 
 // ---- More than one Google account. A fake Google: its window gives the account asked
 // for, or, when choosing, the one the test says; each account has its own lists.
-await js(`localStorage.setItem('tabandtick-logged-out', '1'); sessionStorage.clear(); true`);
+await js(`localStorage.setItem('tabandtick-logged-out', '1'); localStorage.removeItem('tabandtick-token'); localStorage.removeItem('tabandtick-tokens'); true`);
 await cdp('Page.navigate', { url: base + 'index.html' });
 await wait(1500);
 await js(`window.windows = 0; window.choose = '';
@@ -880,6 +880,12 @@ await js(`window.windows = 0; window.choose = '';
 await wait(400);
 const accountsNow = () => js(`({ lists: $('#lists .name').map(function() { return this.textContent; }).get().join(), others: $('#other-accounts .other-account').map(function() { return $(this).attr('data-email'); }).get(), me: $('#account-email').text(), all: accounts().map(function(a) { return a.email; }) })`);
 check('logged in as one account', await accountsNow(), { lists: 'alex’s list', others: [], me: 'alex@example.com', all: ['alex@example.com'] });
+check('the sign-in is kept, so closing the tab doesn’t log you out', await js(`JSON.parse(localStorage.getItem('tabandtick-token')).token`), 'token-alex@example.com');
+await js(`window.expiredAt = windows; auth.expired(function() {}); true`);
+check('once the hour is up, there’s no token', await js(`auth.token()`), null);
+await key('Escape');
+await wait(200);
+check('...and the next key renews it, for the same account, in one window', [await js(`auth.token()`), await js(`windows - expiredAt`)], ['token-alex@example.com', 1]);
 check('the menu offers another account', await js(`$('#add-account').is(':visible') || $('#add-account').css('display') !== 'none'`), true);
 await js(`choose = 'sam@example.com'; $('#add-account').click(); true`);
 await wait(400);
