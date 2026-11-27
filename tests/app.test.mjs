@@ -993,6 +993,22 @@ await wait(200);
 check('Drive, for shared lists, is asked of Chrome for its account', [await js('drove'), await js('chromeCalls'), await js('auth.hasDrive()')], [true, ['ask 4'], true]);
 await cdp('Page.removeScriptToEvaluateOnNewDocument', { identifier: fakeChrome.result.identifier });
 
+// ---- Without a connection: the website opens from its kept files, and says it's offline
+await js(`localStorage.clear(); localStorage.setItem('tabandtick-logged-out', '1'); true`);
+await cdp('Page.navigate', { url: base + 'index.html' });
+await wait(800);
+check('the website keeps its files to open offline', await js(`navigator.serviceWorker.ready.then(function() { return caches.open('tabandtick-app'); }).then(function(c) { return c.keys(); }).then(function(k) { return k.length >= 10; })`), true);
+await cdp('Network.enable');
+await cdp('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+await cdp('Page.reload');
+await wait(1500);
+check('...and opens without a connection', await js(`[document.title, typeof checkAuth, $('#welcome h2').text()]`), ['Tab & Tick', 'function', 'A to-do list as fast as you can type']);
+await js(`window.dispatchEvent(new Event('offline')); true`);
+check('going offline says so', await js(`$('#message span').text()`), 'You’re offline. Changes will be saved when you’re back.');
+await cdp('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+await js(`window.dispatchEvent(new Event('online')); true`);
+check('...and coming back clears it', await js(`$('#message').is(':visible')`), false);
+
 const errors = await js(`window.__errors || []`);
 check('no errors in the page', pageErrors.slice(0, 3), []);
 console.log(failures ? failures + ' failed' : 'all passed');
