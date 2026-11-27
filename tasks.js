@@ -1259,6 +1259,75 @@ function isoDay(date) {
   return date.getFullYear() + '-' + two(date.getMonth() + 1) + '-' + two(date.getDate());
 }
 
+// ---- Dates typed at the end of a title: "Pay rent fri", "Dentist tomorrow",
+// "Mum's birthday on 5 dec". Read when you leave the title, if the task has no date.
+
+var WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+var MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+// The title without the date, and the date as 2026-11-25, or null if it doesn't end
+// in one. now is for tests.
+function typedDate(text, now) {
+  now = now || new Date();
+  var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  function after(days) { return new Date(today.getFullYear(), today.getMonth(), today.getDate() + days); }
+  var weekday = '(sun|mon|tue|tues|wed|weds|thu|thur|thurs|fri|sat)(?:day|nesday|rsday|urday|sday)?';
+  var month = '(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*';
+  var rules = [
+    [/^(?:today|tod)$/, function() { return today; }],
+    [/^(?:tomorrow|tmrw|tmr|tomorow)$/, function() { return after(1); }],
+    [/^next week$/, function() { return after(((8 - today.getDay()) % 7) || 7); }], // Monday
+    [new RegExp('^(next )?' + weekday + '$'), function(m) {
+      var want = WEEKDAYS.indexOf(m[2].slice(0, 3)), ahead = ((want - today.getDay() + 7) % 7) || 7;
+      return after(ahead + (m[1] ? 7 : 0));
+    }],
+    [/^in (\d{1,3}) (day|days|week|weeks)$/, function(m) { return after(+m[1] * (m[2].charAt(0) === 'w' ? 7 : 1)); }],
+    [new RegExp('^(\\d{1,2})(?:st|nd|rd|th)? ' + month + '$'), function(m) { return dayOf(+m[1], m[2]); }],
+    [new RegExp('^' + month + ' (\\d{1,2})(?:st|nd|rd|th)?$'), function(m) { return dayOf(+m[2], m[1]); }],
+    [/^(\d{1,2})\/(\d{1,2})$/, function(m) { return dayOf(+m[1], MONTHS[+m[2] - 1]); }] // day/month, as in the UK
+  ];
+  // The next such day, this year or next; none if it isn't a real date
+  function dayOf(day, name) {
+    var m = MONTHS.indexOf((name || '').slice(0, 3));
+    if (m < 0 || day < 1) return null;
+    var d = new Date(today.getFullYear(), m, day);
+    if (d.getMonth() !== m) return null;
+    return d < today ? new Date(today.getFullYear() + 1, m, day) : d;
+  }
+  var words = text.replace(/\s+$/, '').split(/\s+/);
+  for (var take = Math.min(3, words.length - 1); take >= 1; take--) { // the longest ending first
+    var end = words.slice(-take).join(' ').toLowerCase(), rest = words.slice(0, -take);
+    for (var i = 0; i < rules.length; i++) {
+      var m = end.match(rules[i][0]), date = m && rules[i][1](m);
+      if (!date) continue;
+      if (/^(on|by|due)$/i.test(rest[rest.length - 1] || '') && rest.length > 1) rest.pop();
+      return { title: rest.join(' '), due: isoDay(date) };
+    }
+  }
+  return null;
+}
+
+// On leaving a title you changed: take a date off its end, with an undo.
+function takeDate(todo) {
+  var el = todo[0];
+  if (!el || el.deleted || todo.hasClass('checked')) return;
+  var now = current(todo);
+  if (now.due || now.title === (el.saved && el.saved.title) || now.title === el.keptTitle) return;
+  var found = typedDate(now.title);
+  if (!found || !found.title) return;
+  setValues(todo, $.extend({}, now, found));
+  var undone = false;
+  function undo() {
+    undone = true;
+    el.keptTitle = now.title; // as you want it: not read again unless you change it
+    setValues(todo, $.extend(current(todo), { title: now.title, due: '' }));
+    el.lastTitle = now.title;
+    saveSoon(todo);
+  }
+  canUndo(function() { return !undone && $.contains(document, el) && current(todo).due === found.due; }, undo);
+  showMessage('Due ' + dayName(found.due) + '.', 'Undo', undo, 5000);
+}
+
 // Today, or so many days from it, as 2026-11-25.
 function dayFrom(days) {
   var now = new Date();
