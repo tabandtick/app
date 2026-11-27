@@ -827,6 +827,29 @@ await touch('touchEnd'); await wait(200);
 check('dragging by the handle with a finger moves the task', (await s()).order, before.join(' '));
 await cdp('Emulation.setTouchEmulationEnabled', { enabled: false });
 
+// ---- Dates typed at the end of a title, read as you leave it
+check('dates at the end of a title are read, from Thursday 26 November 2026', await js(`(function() {
+  var now = new Date(2026, 10, 26, 15, 0);
+  return ['Pay rent fri', 'Pay rent next fri', 'Dentist tomorrow', 'Gym today', 'Call Mum thursday', 'Birthday on 5 dec',
+    'Birthday dec 5th', 'Taxes 31/1', 'Book holiday in 2 weeks', 'Plan next week', 'Friday', 'Read The Martian',
+    'Sunday roast', 'Pay 30 feb'].map(function(t) { var f = typedDate(t, now); return f ? f.title + ' | ' + f.due : '-'; });
+})()`), ['Pay rent | 2026-11-27', 'Pay rent | 2026-12-04', 'Dentist | 2026-11-27', 'Gym | 2026-11-26', 'Call Mum | 2026-12-03',
+  'Birthday | 2026-12-05', 'Birthday | 2026-12-05', 'Taxes | 2027-01-31', 'Book holiday | 2026-12-10', 'Plan | 2026-11-30',
+  '-', '-', '-', '-']);
+await reset([{ id: 'd1', title: 'One', position: '1' }]);
+await js(`focusRow('One')`);
+await key('Enter');
+await cdp('Input.insertText', { text: 'Dentist tomorrow' });
+await key('Enter');
+await wait(100);
+const dated = () => js(`(function() { var r = $(${rowOf('Dentist')}); if (!r.length) r = $(${rowOf('Dentist tomorrow')}); return [r.children('.todo').val(), r.find('.due').val()]; })()`);
+check('pressing Enter takes the date off the title', [await dated(), await js(`$('#message span').text()`)], [['Dentist', await js(`dayFrom(1)`)], 'Due Tomorrow.']);
+await js(`$('#message button').click(); true`);
+check('...and Undo puts it back', await dated(), ['Dentist tomorrow', '']);
+await js(`focusRow('Dentist tomorrow')`); await key('Enter');
+await wait(100);
+check('...and it isn’t read again until the title changes', await dated(), ['Dentist tomorrow', '']);
+
 // ---- The website's sign-in is renewed on a key press near the end of its hour.
 // Last, as it loads the page again. Google's script is replaced by a fake.
 // (Marked as logged out, so the page doesn't try the made-up token on Google as it loads.)

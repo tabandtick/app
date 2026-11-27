@@ -18,6 +18,9 @@ server or build step. Not made or endorsed by Google.
 - **Cmd/Ctrl+Enter** ticks a task, or reopens it, and moves on to the next. With
   several tasks picked, it ticks them all.
 - **Pasting several lines** makes a task of each.
+- **A date at the end of a title** becomes its due date when you leave it: "Pay rent
+  fri", "Dentist tomorrow", "Birthday on 5 dec", "Taxes 31/1", "in 2 weeks", "next
+  week". Undo, or Cmd/Ctrl+Z, puts the words back, and they're then left alone.
 - **Coming back** to the tab after a while shows any changes made elsewhere.
 - **On a phone or tablet,** hold a task, or choose **Select** in its menu, to pick it; tap others
   to add them, then **Tick** or **Delete** them from the bar at the bottom.

@@ -732,7 +732,11 @@ $(document).ready(function() {
 			if (selected[0]) selected[0].tabbedTo = tabbing;
 			if (selected.val()) selected[0].lastTitle = selected.val(); // for undo, if it's then cleared
 		})
-		.on('focusout', '.todo, .notes, .due', function() { saveTask($(this).closest('li').children('.todo')); })
+		.on('focusout', '.todo, .notes, .due', function() {
+			var todo = $(this).closest('li').children('.todo');
+			if ($(this).is('.todo')) takeDate(todo); // "Pay rent fri"
+			saveTask(todo);
+		})
 		.on('focusout', '.claire li', function(event) {
 			var el = $(this).children('.todo')[0];
 			if (el && !$(this).has(event.relatedTarget).length) setTimeout(function() { dropIfBlank(el); }); // once focus has landed
