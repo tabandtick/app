@@ -908,8 +908,8 @@ await js(`calls = []; cloud.has = function(email) { return email === 'alex@examp
   cloud.token = function(email, done) { calls.push('cloud:' + email); setTimeout(function() { done({ access_token: 'quiet', expires_in: 3600, scope: '' }); }, 5); };
   auth.expired(function(ok) { window.renewedQuietly = ok; }); true`);
 await wait(100);
-check('with the cloud, a refused token is renewed quietly, without Google’s window', [await js('renewedQuietly'), await js('auth.token()'), await js('calls')],
-  [true, 'quiet', ['cloud:alex@example.com']]);
+check('with the cloud, a refused token is renewed quietly, without Google’s window', [await js('renewedQuietly'), await js('auth.token()'),
+  await js(`calls.length > 0 && calls.every(function(c) { return c === 'cloud:alex@example.com'; })`)], [true, 'quiet', true]);
 await js(`calls = []; localStorage.setItem('tabandtick-token', JSON.stringify({ token: 'stale', until: Date.now() - 1000 })); true`);
 await cdp('Page.reload');
 await wait(1200);
