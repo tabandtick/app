@@ -73,7 +73,7 @@ function extensionAuth() {
   function webToken(email, interactive, done, choose) {
     var params = {
       client_id: CLIENT_ID, response_type: 'token', redirect_uri: chrome.identity.getRedirectURL(),
-      scope: scopes(email), include_granted_scopes: 'false'
+      scope: scopes(email), include_granted_scopes: 'true'
     };
     if (email) params.login_hint = email;
     if (!interactive) params.prompt = 'none';
@@ -274,9 +274,10 @@ function webAuth() {
     google.accounts.oauth2.initCodeClient({
       client_id: CLIENT_ID,
       scope: SCOPES + (wantsDrive() ? ' ' + DRIVE : ''),
-      // Only these: not others given to the same Google Cloud project (such as
-      // publishing to the Chrome Web Store), which the server would then hold too
-      include_granted_scopes: false,
+      // With what you've agreed to before, such as Drive for shared lists. (The server
+      // won't keep a sign-in that has more than Tab & Tick asks for: see ALLOWED in
+      // supabase/functions/_shared/common.ts.)
+      include_granted_scopes: true,
       ux_mode: 'popup',
       select_account: !!choose,
       login_hint: choose ? '' : hint,
