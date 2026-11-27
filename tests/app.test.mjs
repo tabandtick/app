@@ -31,7 +31,7 @@ const chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0',
   '--no-first-run', '--no-sandbox', '--window-size=1280,900', 'about:blank'], { stdio: 'ignore' });
 const wait = ms => new Promise(r => setTimeout(r, ms));
 let targets;
-for (let i = 0; i < 100 && !targets; i++) {
+for (let i = 0; i < 300 && !targets; i++) { // up to a minute: Chrome can start slowly on GitHub
   try {
     const port = readFileSync(join(dir, 'DevToolsActivePort'), 'utf8').split('\n')[0];
     targets = await (await fetch('http://127.0.0.1:' + port + '/json')).json();
