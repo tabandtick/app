@@ -905,6 +905,10 @@ $(document).ready(function() {
 			showShortcuts();
 		}
 	});
+	$('#other-accounts').on('click', '.other-account', function() {
+		switchAccount($(this).attr('data-email'));
+	});
+	$('#add-account').click(addAccount);
 	$('#log-out-button').click(function() {
 		closeMenu();
 		logOut();

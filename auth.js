@@ -3,7 +3,11 @@
 //   silent(done)   sign in without asking      login(done)  ask if need be
 //   expired(done)  replace a refused token     token()      the token, or null
 //   logout()       forget the token
-// and, on the website, renew() and hint(email): see below. For shared lists:
+// and, on the website, renew() and hint(email): see below. For more than one account:
+//   canSwitch      whether it can be done here
+//   remember(email)  keep the token as this account's   use(email, done)  switch to it
+//   add(done)      ask Google for another account       forget(email)
+// For shared lists:
 //   canShare       whether they can be used here
 //   hasDrive()     whether the token can open them   drive(done)  ask for that
 // done is called with true or false, and the reason if false.
@@ -40,6 +44,7 @@ function extensionAuth() {
     expired: function(done) { forget(function() { get(false, done); }); },
     token: function() { return token; },
     logout: function() { forget(function() {}); },
+    canSwitch: false, // Chrome only gives an extension the account Chrome is signed in to
     canShare: false, // not yet: Google's file picker can't be loaded in an extension
     hasDrive: function() { return false; },
     drive: function(done) { done(false, 'not in the extension yet'); }
@@ -50,13 +55,16 @@ function extensionAuth() {
 // that a refresh doesn't log you out; closing the tab forgets it.
 function webAuth() {
   var KEY = 'tabandtick-token';
+  var TOKENS = 'tabandtick-tokens'; // each account's, by email, to switch back without asking
   var waiting = [];
   var ready = false;
   var saved = null; // {token, until, scope}
-  var DRIVE_KEY = 'tabandtick-drive'; // set once you've let it use Drive, so renewing asks for it too
+  var tokens = {};
+  var DRIVE_KEY = 'tabandtick-drive:'; // and the email: set once that account has let it use Drive
 
   try {
     saved = JSON.parse(sessionStorage.getItem(KEY));
+    tokens = JSON.parse(sessionStorage.getItem(TOKENS)) || {};
   } catch (e) { /* storage is blocked, or not ours */ }
 
   function keep(value) {
@@ -65,6 +73,14 @@ function webAuth() {
       if (value) sessionStorage.setItem(KEY, JSON.stringify(value));
       else sessionStorage.removeItem(KEY);
     } catch (e) { /* storage is blocked */ }
+    if (value && hint) {
+      tokens[hint] = value;
+      keepTokens();
+    }
+  }
+
+  function keepTokens() {
+    try { sessionStorage.setItem(TOKENS, JSON.stringify(tokens)); } catch (e) { /* storage is blocked */ }
   }
 
   function token() {
@@ -87,10 +103,11 @@ function webAuth() {
   var renewing = false;
 
   function wantsDrive(value) {
+    if (!hint) return false; // a new account hasn't
     try {
-      if (value === true) localStorage.setItem(DRIVE_KEY, '1');
-      if (value === false) localStorage.removeItem(DRIVE_KEY);
-      return localStorage.getItem(DRIVE_KEY) === '1';
+      if (value === true) localStorage.setItem(DRIVE_KEY + hint, '1');
+      if (value === false) localStorage.removeItem(DRIVE_KEY + hint);
+      return localStorage.getItem(DRIVE_KEY + hint) === '1';
     } catch (e) { return !!value; }
   }
 
@@ -125,7 +142,47 @@ function webAuth() {
       done(false, 'expired');
     },
     token: token,
-    logout: function() { keep(null); wantsDrive(false); },
+    logout: function() { keep(null); },
+    canSwitch: true,
+    // The token just got is this account's: called once Google says whose it is.
+    remember: function(email) {
+      hint = email || '';
+      try { // from when one account's Drive was set for the whole browser
+        if (hint && localStorage.getItem('tabandtick-drive') === '1') {
+          localStorage.setItem(DRIVE_KEY + hint, '1');
+          localStorage.removeItem('tabandtick-drive');
+        }
+      } catch (e) { /* storage is blocked */ }
+      if (hint && token()) {
+        $.each(tokens, function(other, kept) { // got for another, if Google's window was answered with this one
+          if (other !== hint && kept.token === saved.token) delete tokens[other];
+        });
+        tokens[hint] = saved;
+        keepTokens();
+      }
+    },
+    // Switch to an account added before: at once if its token is fresh, or Google's
+    // window, which closes by itself as that account agreed before.
+    use: function(email, done) {
+      hint = email;
+      var kept = tokens[email];
+      if (kept && kept.until > Date.now()) {
+        keep(kept);
+        return done(true);
+      }
+      keep(null);
+      login(done, false);
+    },
+    add: function(done) {
+      hint = '';
+      keep(null);
+      login(done, true);
+    },
+    forget: function(email) {
+      delete tokens[email];
+      keepTokens();
+      try { localStorage.removeItem(DRIVE_KEY + email); } catch (e) { /* storage is blocked */ }
+    },
     canShare: true,
     hasDrive: hasDrive,
     drive: function(done) {

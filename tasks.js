@@ -4,6 +4,7 @@ var session = 0; // goes up on log out or changing list, so late answers are ign
 
 function checkAuth() {
   if (loggedOut()) return showLogIn();
+  if (auth.hint) auth.hint(currentAccount()); // so renewing asks for the same one
   auth.silent(handleAuthResult);
 }
 
@@ -176,9 +177,10 @@ var defaultList; // the id of the one that Google won't delete
 var hiddenHere = [];
 
 function hiddenLists(ids) {
+  var key = 'tabandtick-hidden' + (currentAccount() ? ':' + currentAccount() : '');
   try {
-    if (ids) localStorage.setItem('tabandtick-hidden', JSON.stringify(ids));
-    return JSON.parse(localStorage.getItem('tabandtick-hidden')) || [];
+    if (ids) localStorage.setItem(key, JSON.stringify(ids));
+    return JSON.parse(localStorage.getItem(key)) || [];
   } catch (e) { // storage is blocked, or not ours
     if (ids) hiddenHere = ids;
     return hiddenHere;
@@ -195,7 +197,8 @@ function start() {
     tasksLoaded = true;
     lists = (result && result.items) || [];
     showStatus('');
-    $('body').addClass('signed-in').toggleClass('can-share', !!auth.canShare);
+    $('body').addClass('signed-in').toggleClass('can-share', !!auth.canShare).toggleClass('can-switch', !!auth.canSwitch);
+    showAccounts();
     showLists();
     loadProfile();
     startShared();
@@ -598,7 +601,8 @@ function logOut() {
   settle('Log out anyway', endSession);
 }
 
-function endSession() {
+// Forget everything on screen, as for logging out or switching account.
+function resetSession() {
   undoStack = [];
   ticking = 0;
   flush(); // finishes any deletes
@@ -614,12 +618,95 @@ function endSession() {
   closeMenu();
   $('#cards, #lists').empty();
   $('#none-shown').hide();
-  loggedOut(true);
-  auth.logout();
-  hiddenLists([]);
   $('body').removeClass('signed-in side-open');
   showProfile(null);
+}
+
+// Log out of this account. If you've added others, it goes to the next of them.
+function endSession() {
+  var email = currentAccount(), others = $.grep(accounts(), function(a) { return a.email !== email; });
+  resetSession();
+  auth.logout();
+  if (auth.forget && email) auth.forget(email);
+  accounts(others);
+  currentAccount('');
+  if (others.length && auth.canSwitch) return useAccount(others[0].email);
+  loggedOut(true);
   showLogIn();
+}
+
+// ---- More than one Google account. Those you've added are kept in this browser, with
+// the one in use; each has its own sign-in, kept as on a single account.
+
+function stored(key, value) {
+  try {
+    if (value !== undefined) localStorage.setItem(key, JSON.stringify(value));
+    return JSON.parse(localStorage.getItem(key));
+  } catch (e) { // storage is blocked, or not ours
+    return value;
+  }
+}
+
+// [{ email, name, picture }]. Pass them to set them.
+function accounts(list) {
+  return stored('tabandtick-accounts', list) || [];
+}
+
+// The email of the one in use, or ''. Pass it to set it.
+function currentAccount(email) {
+  return stored('tabandtick-account', email) || '';
+}
+
+// Show the other one. Its own sign-in is used if it's fresh; if not, Google's window
+// opens, which needs the click this is called from, so nothing is waited for first
+// unless something is still being saved.
+function switchAccount(email) {
+  closeMenu();
+  if (email === currentAccount()) return;
+  settle('Switch anyway', function() {
+    finishRemovals();
+    resetSession();
+    useAccount(email);
+  });
+}
+
+function useAccount(email) {
+  currentAccount(email);
+  showStatus('Loading…');
+  auth.use(email, function(ok, reason) {
+    if (ok) return start();
+    showLogIn();
+    showMessage('Couldn’t switch to ' + email + (reason ? ' (' + reason + ').' : '.') + ' Log in to use it.', null, null, 10000);
+  });
+}
+
+function addAccount() {
+  closeMenu();
+  var was = currentAccount();
+  settle('Go on anyway', function() {
+    finishRemovals();
+    resetSession();
+    currentAccount('');
+    showStatus('Loading…');
+    auth.add(function(ok) {
+      if (ok) return start();
+      if (was) return useAccount(was); // you closed Google's window: back to the one you had
+      showLogIn();
+    });
+  });
+}
+
+// Your accounts, in the account menu: the one in use at the top, the others under it.
+function showAccounts() {
+  var email = currentAccount();
+  $('#other-accounts').empty().append($.map(accounts(), function(a) {
+    if (a.email === email) return null;
+    var face = a.picture ? $('<img class="face" alt="" width="28" height="28" referrerpolicy="no-referrer">').attr('src', a.picture)
+      : $('<span class="face" aria-hidden="true"></span>').text((a.name || a.email).charAt(0).toUpperCase());
+    return $('<button type="button" role="menuitem" class="other-account"></button>').attr('data-email', a.email).append(
+      face, $('<span class="who"></span>').append($('<span class="name"></span>').text(a.name || a.email), a.name ? $('<span class="email"></span>').text(a.email) : null)
+    )[0];
+  }));
 }
 
 // Your name, email and picture, for the account button. Nothing else uses them,
@@ -633,7 +720,18 @@ function loadProfile() {
     .then(function(profile) {
       if (started !== session) return;
       showProfile(profile);
-      if (auth.hint && profile) auth.hint(profile.email);
+      if (!profile || !profile.email) return;
+      if (auth.hint) auth.hint(profile.email);
+      if (auth.remember) auth.remember(profile.email);
+      var was = currentAccount();
+      var all = accounts();
+      var at = all.map(function(a) { return a.email; }).indexOf(profile.email);
+      var me = { email: profile.email, name: profile.name || '', picture: profile.picture || '' };
+      if (at >= 0) all[at] = me; else all.push(me);
+      accounts(all);
+      currentAccount(profile.email);
+      showAccounts();
+      if (was !== profile.email) showLists(); // its own hidden lists
     });
 }
 
@@ -885,7 +983,9 @@ function countDone(card) {
   var el = card && card[0];
   if (!el) return;
   clearTimeout(el.countTimer);
+  var started = session;
   el.countTimer = setTimeout(function() {
+    if (started !== session) return; // logged out, or another account, since
     var count = 0;
     (function page(token) {
       send('GET', 'lists/' + encodeURIComponent(el.list) + '/tasks?showCompleted=true&showHidden=true&maxResults=100&fields=items(id,status),nextPageToken' +

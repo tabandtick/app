@@ -848,6 +848,60 @@ check('a key in the last minutes renews the sign-in, for the same account, witho
 await key('Escape');
 check('...and not again while the new one is fresh', await js('calls.length'), 2);
 
+// ---- More than one Google account. A fake Google: its window gives the account asked
+// for, or, when choosing, the one the test says; each account has its own lists.
+await js(`localStorage.setItem('tabandtick-logged-out', '1'); sessionStorage.clear(); true`);
+await cdp('Page.navigate', { url: base + 'index.html' });
+await wait(1500);
+await js(`window.windows = 0; window.choose = '';
+  window.google = { accounts: { oauth2: {
+    hasGrantedAllScopes: function() { return true; },
+    initTokenClient: function(config) {
+      return { requestAccessToken: function(options) {
+        windows++;
+        var who = options.prompt === 'select_account' || !config.hint ? choose : config.hint;
+        config.callback({ access_token: 'token-' + who, expires_in: 3600, scope: '' });
+      } };
+    } } } };
+  var realFetch = window.fetch;
+  window.fetch = function(url, options) {
+    if (String(url).indexOf('userinfo') < 0) return realFetch.apply(this, arguments);
+    var who = options.headers.Authorization.replace('Bearer token-', '');
+    return Promise.resolve(new Response(JSON.stringify({ email: who, name: who.split('@')[0] })));
+  };
+  window.send = function(method, path, body, done) {
+    var who = (auth.token() || '').replace('token-', ''), name = who.split('@')[0];
+    var result = path.indexOf('users/@me/lists') === 0 ? { items: [{ id: name + '-list', title: name + '’s list' }], id: name + '-list' } : { items: [] };
+    setTimeout(function() { if (done) done(result); }, 5);
+  };
+  localStorage.removeItem('tabandtick-logged-out');
+  choose = 'alex@example.com';
+  handleAuthClick(); true`);
+await wait(400);
+const accountsNow = () => js(`({ lists: $('#lists .name').map(function() { return this.textContent; }).get().join(), others: $('#other-accounts .other-account').map(function() { return $(this).attr('data-email'); }).get(), me: $('#account-email').text(), all: accounts().map(function(a) { return a.email; }) })`);
+check('logged in as one account', await accountsNow(), { lists: 'alex’s list', others: [], me: 'alex@example.com', all: ['alex@example.com'] });
+check('the menu offers another account', await js(`$('#add-account').is(':visible') || $('#add-account').css('display') !== 'none'`), true);
+await js(`choose = 'sam@example.com'; $('#add-account').click(); true`);
+await wait(400);
+check('adding one shows its lists, and lists the first', await accountsNow(), { lists: 'sam’s list', others: ['alex@example.com'], me: 'sam@example.com', all: ['alex@example.com', 'sam@example.com'] });
+await js(`showList('sam-list', false); true`);
+await wait(200);
+const windowsBefore = await js('windows');
+await js(`$('#other-accounts .other-account').first().click(); true`);
+await wait(400);
+check('switching back is at once, without Google’s window', [await accountsNow(), await js('windows') - windowsBefore],
+  [{ lists: 'alex’s list', others: ['sam@example.com'], me: 'alex@example.com', all: ['alex@example.com', 'sam@example.com'] }, 0]);
+check('each account has its own hidden lists', await js(`$('#lists input').map(function() { return this.checked; }).get()`), [true]);
+await js(`switchAccount('sam@example.com'); true`);
+await wait(400);
+check('...and Sam’s stay hidden', [await js(`$('#lists input').map(function() { return this.checked; }).get()`), await js(`$('#none-shown').is(':visible')`)], [[false], true]);
+await js(`logOut(); true`);
+await wait(400);
+check('logging out of one goes to the other', await accountsNow(), { lists: 'alex’s list', others: [], me: 'alex@example.com', all: ['alex@example.com'] });
+await js(`logOut(); true`);
+await wait(300);
+check('logging out of the last shows Log in', [await js(`$('#authorize-div').is(':visible')`), await js(`loggedOut()`), await js(`accounts().length`)], [true, true, 0]);
+
 const errors = await js(`window.__errors || []`);
 check('no errors in the page', pageErrors.slice(0, 3), []);
 console.log(failures ? failures + ' failed' : 'all passed');

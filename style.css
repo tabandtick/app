@@ -278,6 +278,58 @@ ul.list li.no-match {
   display: none;
 }
 
+/* Your other Google accounts, and adding one, where switching can be done */
+body:not(.can-switch) .switch-only {
+  display: none !important;
+}
+
+#account .other-account,
+#add-account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.other-account .face {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--accent);
+  color: var(--card);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.other-account .who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  text-align: left;
+}
+
+.other-account .name,
+.other-account .email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.other-account .email {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+#add-account .icon {
+  flex: none;
+  width: 28px;
+  color: var(--muted);
+}
+
 /* Hides and shows the lists, as Google Tasks' main menu button does */
 #side-toggle {
   display: none;

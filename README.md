@@ -49,6 +49,12 @@ saved at once and others' changes appear within a few seconds; if two people cha
 the same task at once, the later change wins. Shared lists aren't in Google Tasks
 itself, so they don't show in Gmail, Calendar or Google's Tasks app.
 
+**More than one Google account** (on the website): the account menu lists the others
+under yours, and **Add another account** adds one. Switching is at once for an account
+used in this tab within the hour, and otherwise Google's window opens and closes by
+itself. Each account keeps its own hidden lists. **Log out** logs out of the one in use
+and goes to the next.
+
 **?** or **Cmd/Ctrl+/** shows all the keyboard shortcuts, as does the account menu.
 
 **Cmd/Ctrl+Z** undoes completing, moving, indenting and splitting, and deleting and
