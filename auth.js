@@ -19,35 +19,161 @@ var SCOPES = SCOPE + ' https://www.googleapis.com/auth/userinfo.profile https://
 var DRIVE = 'https://www.googleapis.com/auth/drive.file';
 var CLIENT_ID = '719894949389-8mfcps2du7nup1g0a14nfniul2fp812j.apps.googleusercontent.com';
 
+// In the extension, the account Chrome is signed in to is Chrome's to look after, so it
+// stays signed in. Other accounts you add sign in through Google's page for extensions,
+// whose hour-long token can be renewed without asking, as long as that account is
+// signed in to Google in Chrome.
 function extensionAuth() {
-  var token = null;
+  var token = null, granted = '', until = 0;
+  var mainEmail = stored('tabandtick-main') || ''; // the email of Chrome's account
+  var using = stored('tabandtick-using') || '';    // an added account in use, or '' for Chrome's
+  var tokens = stored('tabandtick-tokens') || {};   // added accounts': { email: { token, until, scope } }
+  var hint = '';
 
-  function get(interactive, done) {
-    chrome.identity.getAuthToken({ interactive: interactive }, function(result) {
+  function stored(key, value) {
+    try {
+      if (value !== undefined) localStorage.setItem(key, JSON.stringify(value));
+      return JSON.parse(localStorage.getItem(key));
+    } catch (e) { return value; }
+  }
+
+  function wantsDrive(email, value) {
+    var key = 'tabandtick-drive:' + (email || 'main');
+    try {
+      if (value === true) localStorage.setItem(key, '1');
+      return localStorage.getItem(key) === '1';
+    } catch (e) { return !!value; }
+  }
+
+  function scopes(email) {
+    return SCOPES + (wantsDrive(email) ? ' ' + DRIVE : '');
+  }
+
+  // Chrome's account
+  function chromeToken(interactive, done) {
+    chrome.identity.getAuthToken({ interactive: interactive, scopes: scopes(mainEmail).split(' ') }, function(result) {
       var reason = chrome.runtime.lastError && chrome.runtime.lastError.message;
       if (reason) console.warn('Sign-in:', reason);
       token = (result && result.token) || (typeof result === 'string' && result) || null;
+      granted = (result && result.grantedScopes || []).join(' ');
+      until = Infinity; // Chrome renews it
       done(!!token, reason);
     });
   }
 
-  function forget(done) {
-    var old = token;
-    token = null;
+  function dropChromeToken(done) {
+    var old = using ? null : token;
+    if (!using) token = null;
     if (!old) return done();
     chrome.identity.removeCachedAuthToken({ token: old }, done);
   }
 
+  // An added account, through Google's page: done(ok, reason). Not interactive, it
+  // succeeds only if Google can answer without showing anything.
+  function webToken(email, interactive, done, choose) {
+    var params = {
+      client_id: CLIENT_ID, response_type: 'token', redirect_uri: chrome.identity.getRedirectURL(),
+      scope: scopes(email), include_granted_scopes: 'true'
+    };
+    if (email) params.login_hint = email;
+    if (!interactive) params.prompt = 'none';
+    else if (choose) params.prompt = 'select_account';
+    chrome.identity.launchWebAuthFlow({ url: 'https://accounts.google.com/o/oauth2/v2/auth?' + $.param(params), interactive: interactive }, function(redirect) {
+      var reason = chrome.runtime.lastError && chrome.runtime.lastError.message;
+      var answer = new URLSearchParams(((redirect || '').split('#')[1]) || '');
+      if (reason || !answer.get('access_token')) return done(false, reason || answer.get('error') || 'no token');
+      token = answer.get('access_token');
+      granted = answer.get('scope') || '';
+      until = Date.now() + (Number(answer.get('expires_in')) - 60) * 1000;
+      if (email) keep(email);
+      done(true);
+    });
+  }
+
+  function keep(email) {
+    tokens[email] = { token: token, until: until, scope: granted };
+    stored('tabandtick-tokens', tokens);
+  }
+
+  function use(email, done) {
+    hint = email;
+    if (!email || email === mainEmail) { // Chrome's
+      using = '';
+      stored('tabandtick-using', '');
+      return chromeToken(false, done);
+    }
+    using = email;
+    stored('tabandtick-using', email);
+    var kept = tokens[email];
+    if (kept && kept.until > Date.now()) {
+      token = kept.token; granted = kept.scope; until = kept.until;
+      return done(true);
+    }
+    webToken(email, false, function(ok, reason) {
+      if (ok) return done(true);
+      webToken(email, true, done); // Google needs to ask
+    });
+  }
+
   return {
-    silent: function(done) { get(false, done); },
-    login: function(done) { get(true, done); },
-    expired: function(done) { forget(function() { get(false, done); }); },
-    token: function() { return token; },
-    logout: function() { forget(function() {}); },
-    canSwitch: false, // Chrome only gives an extension the account Chrome is signed in to
-    canShare: false, // not yet: Google's file picker can't be loaded in an extension
-    hasDrive: function() { return false; },
-    drive: function(done) { done(false, 'not in the extension yet'); }
+    silent: function(done) { using ? use(using, done) : chromeToken(false, done); },
+    login: function(done) { use(using || mainEmail, function(ok, reason) { if (ok || using) return done(ok, reason); chromeToken(true, done); }); },
+    expired: function(done) {
+      if (!using) return dropChromeToken(function() { chromeToken(false, done); });
+      delete tokens[using];
+      webToken(using, false, done);
+    },
+    token: function() { return token && until > Date.now() ? token : null; },
+    logout: function() { if (using) token = null; else dropChromeToken(function() {}); },
+    hint: function(email) { hint = email || ''; },
+    canSwitch: true,
+    // The token in use is this account's. Chrome's account is the one got from Chrome.
+    remember: function(email) {
+      hint = email || '';
+      if (!email) return;
+      if (!using) {
+        mainEmail = email;
+        stored('tabandtick-main', email);
+      } else if (using !== email) { // Google's page was answered with another one
+        delete tokens[using];
+        using = email;
+        stored('tabandtick-using', email);
+        keep(email);
+      }
+    },
+    use: use,
+    add: function(done) {
+      using = 'new';
+      webToken('', true, function(ok, reason) {
+        if (!ok) using = '';
+        done(ok, reason);
+      }, true);
+    },
+    forget: function(email) {
+      delete tokens[email];
+      stored('tabandtick-tokens', tokens);
+      if (email === mainEmail) {
+        mainEmail = '';
+        stored('tabandtick-main', '');
+      }
+      if (using === email) {
+        using = '';
+        stored('tabandtick-using', '');
+      }
+    },
+    canShare: true,
+    hasDrive: function() { return !!token && granted.split(' ').indexOf(DRIVE) >= 0; },
+    drive: function(done) {
+      var email = using || '';
+      wantsDrive(using ? using : mainEmail, true);
+      if (!using) wantsDrive('', true);
+      var finish = function(ok, reason) {
+        if (ok && granted.split(' ').indexOf(DRIVE) < 0) return done(false, 'access to Drive wasn’t ticked');
+        done(ok, reason);
+      };
+      if (!email) return chromeToken(true, finish);
+      webToken(email, true, finish);
+    }
   };
 }
 

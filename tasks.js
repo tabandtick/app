@@ -538,11 +538,12 @@ function showSharers(card, who) {
 
 // A link to a shared list: tabandtick.github.io/app/#open=<its file>. Kept until
 // you're logged in, then opened.
+// #pick, from the extension, which can't show Google's file picker itself, opens that.
 var linkToOpen = (function() {
-  var m = location.hash.match(/^#open=([\w-]+)$/);
+  var m = location.hash.match(/^#(?:open=([\w-]+)|(pick))$/);
   if (!m) return null;
   history.replaceState(null, '', location.pathname + location.search);
-  return m[1];
+  return m[1] || 'pick';
 })();
 
 function openLink() {
@@ -550,6 +551,9 @@ function openLink() {
   if (!id || !tasksLoaded) return;
   linkToOpen = null;
   if (!auth.canShare) return showMessage('Shared lists open on the website: tabandtick.github.io/app', null, null, 10000);
+  if (id === 'pick') {
+    return ask({ title: 'Open a list shared with you?', text: 'Google asks you to pick it once, to let Tab & Tick open it. It then opens in the extension too.', button: 'Choose' }, pickShared);
+  }
   var known = findList('drive:' + id);
   if (known) return showOpened(known);
   ask({ title: 'Open a shared list?', text: 'Someone shared a list with you. To open it, Tab & Tick asks Google for the files you open with it in Google Drive.', button: 'Open it' }, function() {
@@ -604,6 +608,7 @@ function refreshAll() {
     if ($(this).hasClass('shared')) showSharers($(this));
   });
   shared.check();
+  startShared(); // any opened elsewhere since, such as on the website from the extension
 }
 
 // Tick tasks, or untick them, as one: one message, and one undo.

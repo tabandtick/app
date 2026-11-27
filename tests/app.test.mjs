@@ -908,6 +908,68 @@ await js(`logOut(); true`);
 await wait(300);
 check('logging out of the last shows Log in', [await js(`$('#authorize-div').is(':visible')`), await js(`loggedOut()`), await js(`accounts().length`)], [true, true, 0]);
 
+// ---- The extension: Chrome's account through Chrome, others through Google's page for
+// extensions. A fake of both: Chrome's is main@, and Google's page answers with the
+// account asked for, or when choosing, the one the test says; prompt=none fails if told to.
+const fakeChrome = await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `
+  window.flows = []; window.chooseNext = ''; window.googleSession = true; window.chromeCalls = [];
+  window.chrome = { runtime: {}, identity: {
+    getAuthToken: function(options, done) {
+      chromeCalls.push((options.interactive ? 'ask ' : 'silent ') + options.scopes.length);
+      var drive = options.scopes.indexOf('https://www.googleapis.com/auth/drive.file') >= 0;
+      done({ token: 'token-main@example.com' + (drive ? '+drive' : ''), grantedScopes: options.scopes });
+    },
+    removeCachedAuthToken: function(options, done) { done(); },
+    getRedirectURL: function() { return 'https://fake.chromiumapp.org/'; },
+    launchWebAuthFlow: function(options, done) {
+      var q = new URLSearchParams(options.url.split('?')[1]);
+      flows.push((q.get('prompt') || 'ask') + ' ' + (q.get('login_hint') || '-'));
+      if (q.get('prompt') === 'none' && !googleSession) return setTimeout(function() { done('https://fake.chromiumapp.org/#error=interaction_required'); }, 5);
+      var who = q.get('prompt') === 'select_account' ? chooseNext : q.get('login_hint');
+      setTimeout(function() { done('https://fake.chromiumapp.org/#access_token=token-' + who + '&expires_in=3600&scope=' + encodeURIComponent(q.get('scope'))); }, 5);
+    }
+  } };` });
+await js(`localStorage.clear(); true`);
+await cdp('Page.navigate', { url: base + 'index.html' });
+await wait(800);
+await js(`var realFetch = window.fetch;
+  window.fetch = function(url, options) {
+    if (String(url).indexOf('userinfo') < 0) return realFetch.apply(this, arguments);
+    var who = options.headers.Authorization.replace('Bearer token-', '').replace('+drive', '');
+    return Promise.resolve(new Response(JSON.stringify({ email: who, name: who.split('@')[0] })));
+  };
+  window.send = function(method, path, body, done) {
+    var who = (auth.token() || '').replace('token-', '').replace('+drive', ''), name = who.split('@')[0];
+    var result = path.indexOf('users/@me/lists') === 0 ? { items: [{ id: name + '-list', title: name + '’s list' }], id: name + '-list' } : { items: [] };
+    setTimeout(function() { if (done) done(result); }, 5);
+  };
+  tasksLoaded = false; checkAuth(); true`);
+await wait(500);
+const ext = () => js(`({ lists: $('#lists .name').map(function() { return this.textContent; }).get().join(), me: $('#account-email').text(), others: $('#other-accounts .other-account').map(function() { return $(this).attr('data-email'); }).get() })`);
+check('the extension signs in with Chrome’s account, without asking', [await ext(), await js('chromeCalls.every(function(c) { return c.indexOf("silent") === 0; })')], [{ lists: 'main’s list', me: 'main@example.com', others: [] }, true]);
+check('and offers to add another, and to share', await js(`[$('body').hasClass('can-switch'), $('body').hasClass('can-share')]`), [true, true]);
+await js(`chooseNext = 'work@example.com'; $('#add-account').click(); true`);
+await wait(500);
+check('adding one goes through Google’s page, choosing the account', [await ext(), await js('flows')], [{ lists: 'work’s list', me: 'work@example.com', others: ['main@example.com'] }, ['select_account -']]);
+await js(`flows = []; chromeCalls = []; switchAccount('main@example.com'); true`);
+await wait(400);
+check('switching back to Chrome’s account asks Chrome, quietly', [await ext(), await js('chromeCalls'), await js('flows')], [{ lists: 'main’s list', me: 'main@example.com', others: ['work@example.com'] }, ['silent 3'], []]);
+await js(`switchAccount('work@example.com'); true`);
+await wait(400);
+check('switching to the added one uses its token, if fresh', [await ext(), await js('flows')], [{ lists: 'work’s list', me: 'work@example.com', others: ['main@example.com'] }, []]);
+await js(`auth.expired(function(ok) { window.renewed = ok; }); true`);
+await wait(200);
+check('once its hour is up, it renews without asking', [await js('renewed'), await js('flows'), await js('auth.token()')], [true, ['none work@example.com'], 'token-work@example.com']);
+await js(`flows = []; googleSession = false; auth.expired(function(ok) { window.renewed2 = ok; }); true`);
+await wait(200);
+check('...unless that account is no longer signed in to Google in Chrome', [await js('renewed2'), await js('flows')], [false, ['none work@example.com']]);
+await js(`googleSession = true; switchAccount('main@example.com'); true`);
+await wait(400);
+await js(`chromeCalls = []; auth.drive(function(ok) { window.drove = ok; }); true`);
+await wait(200);
+check('Drive, for shared lists, is asked of Chrome for its account', [await js('drove'), await js('chromeCalls'), await js('auth.hasDrive()')], [true, ['ask 4'], true]);
+await cdp('Page.removeScriptToEvaluateOnNewDocument', { identifier: fakeChrome.result.identifier });
+
 const errors = await js(`window.__errors || []`);
 check('no errors in the page', pageErrors.slice(0, 3), []);
 console.log(failures ? failures + ' failed' : 'all passed');

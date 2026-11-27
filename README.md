@@ -39,7 +39,7 @@ server or build step. Not made or endorsed by Google.
   card renames, hides or deletes it, and a task's menu, or dragging, moves it to
   another list.
 
-**Shared lists** (on the website, for now) can be shared with anyone with a Google
+**Shared lists** can be shared with anyone with a Google
 account, to see and change together, such as a household's shopping. Google Tasks can't
 share lists, so a shared list is kept in a file in the Google Drive of whoever made it,
 shared with the others as Drive shares any file. **Create shared list** in the sidebar
@@ -49,11 +49,16 @@ saved at once and others' changes appear within a few seconds; if two people cha
 the same task at once, the later change wins. Shared lists aren't in Google Tasks
 itself, so they don't show in Gmail, Calendar or Google's Tasks app.
 
-**More than one Google account** (on the website): the account menu lists the others
+**More than one Google account:** the account menu lists the others
 under yours, and **Add another account** adds one. Switching is at once for an account
 used in this tab within the hour, and otherwise Google's window opens and closes by
 itself. Each account keeps its own hidden lists. **Log out** logs out of the one in use
 and goes to the next.
+
+In the extension, Chrome's own account signs in through Chrome and stays signed in;
+others sign in through Google's page for extensions, and renew by themselves while
+they're signed in to Google in Chrome. Google's file picker, needed once to open a list
+someone shared with you, can't load in an extension, so the website opens it.
 
 **?** or **Cmd/Ctrl+/** shows all the keyboard shortcuts, as does the account menu.
 

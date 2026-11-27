@@ -3,8 +3,8 @@
 
     python3 tools/build-store.py OUT.zip
 
-It differs from this folder in two ways. The website's sign-in is left out, as the
-store doesn't allow code from other sites. The manifest has no key, as the store
+It differs from this folder in two ways. The website's sign-in and Google's file
+picker are left out, as the store doesn't allow code from other sites. The manifest has no key, as the store
 gives the extension its own ID, and CLIENT_ID is the OAuth client made for that ID.
 """
 import json, re, sys, zipfile
@@ -20,15 +20,13 @@ FILES = ['index.html', 'style.css', 'jquery.js', 'script.js', 'tasks.js', 'share
 
 
 def extension_auth():
+    # Without the website's sign-in, which loads Google's script from another site.
+    # CLIENT_ID stays: added accounts sign in through it, on Google's page for extensions.
     text = (ROOT / 'auth.js').read_text()
-    start = text.index("// Google's token lasts about an hour.")
+    start = text.index("// Google gives a website a token that lasts an hour")
     end = text.index('var auth = ')
     text = text[:start] + 'var auth = extensionAuth();\n'
-    text = re.sub(r"var CLIENT_ID = .*\n", '', text)
-    text = re.sub(r"\A(?://.*\n)+", "// Signing in to Google, which Chrome does. done is called with true or false, and\n// the reason if false.\n", text)
-    text = re.sub(r"(// Your name.*\n)?var SCOPES? = .*\n", '', text)
-    text = re.sub(r"// Only the files Tab & Tick makes.*\nvar DRIVE = .*\n", '', text)
-    assert end > start and 'accounts.google.com' not in text and 'webAuth' not in text and 'SCOPE' not in text
+    assert end > start and 'gsi/client' not in text and 'webAuth' not in text
     return text
 
 
@@ -38,7 +36,7 @@ def extension_shared():
     text = (ROOT / 'shared.js').read_text()
     start = text.index('  var pickerReady')
     end = text.index('  return self;')
-    text = text[:start] + "  function pick() {\n    showMessage('Shared lists open on the website: tabandtick.github.io/app', null, null, 8000);\n  }\n\n" + text[end:]
+    text = text[:start] + "  function pick(id) {\n    pickOnWebsite(id);\n  }\n\n" + text[end:]
     assert 'apis.google.com' not in text and 'gapi' not in text
     return text
 

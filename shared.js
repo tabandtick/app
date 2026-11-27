@@ -564,10 +564,18 @@ var shared = (function() {
     }, failed);
   }
 
+  // In the extension, Google's file picker can't be loaded, so the website opens it.
+  // The access it gives is to Tab & Tick, so the extension can then open the list too.
+  function pickOnWebsite(id) {
+    window.open('https://tabandtick.github.io/app/#' + (id ? 'open=' + encodeURIComponent(id) : 'pick'), '_blank');
+    showMessage('Open it on the website, then come back: it’ll be here too.', null, null, 10000);
+  }
+
   var pickerReady = null; // waiting callers, then true
 
   // Google's file picker, showing just this file if given: done(file id) once picked.
   function pick(id, done) {
+    if (location.protocol === 'chrome-extension:') return pickOnWebsite(id);
     if (!PICKER_KEY) return showMessage('Opening shared lists isn’t set up here yet.', null, null, 6000);
     if (pickerReady === true) return picker(id, done);
     if (pickerReady) return pickerReady.push(function() { picker(id, done); });
