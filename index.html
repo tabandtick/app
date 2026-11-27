@@ -164,8 +164,8 @@
     <script>
       // As an app on an iPhone's home screen, the page goes under the clock and battery,
       // which blur what's beneath them. iOS 26 says that space is 0, so then it's
-      // measured here: 60 under a notch or Dynamic Island, 20 otherwise, and a little
-      // more below the blur.
+      // measured here: 60 under a notch or Dynamic Island, 20 otherwise, and the blur
+      // reaches about 24 further (88pt on an iPhone 18 Pro).
       (function() {
         if (!navigator.standalone) return;
         var probe = document.createElement('div');
@@ -173,7 +173,7 @@
         document.body.appendChild(probe);
         var top = probe.offsetHeight || (screen.height >= 812 ? 60 : 20);
         probe.remove();
-        document.documentElement.style.setProperty('--top', (top + 8) + 'px');
+        document.documentElement.style.setProperty('--top', (top + 24) + 'px');
       })();
     </script>
     <script src="jquery.js"></script>
