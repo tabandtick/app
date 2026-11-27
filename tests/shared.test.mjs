@@ -170,7 +170,7 @@ async function person(name, hash = '') {
     auth.canShare = true;
     auth.silent = function(done) { done(true); };
     loadProfile = function() {};
-    tickPause = closeTime = 0;
+    tickPause = closeTime = openTime = reopenDelay = 0;
     currentAccount('${name}@example.com');
     // Picking the file in Google's picker lets this person open it
     shared.pick = function(id, done) { fetch('${base}grant?user=${name}&id=' + id).then(function() { done(id); }); };

@@ -1059,7 +1059,27 @@ var ticking = 0; // ticks Google hasn't answered yet
 // As in Google Tasks (measured there): a ticked task stays a moment, ticked but not
 // struck through. Then the tasks below slide up over it, 150ms with ease, and it goes
 // to Completed. It doesn't shrink or fade: it's covered. Tests set these to 0.
-var tickPause = 400, closeTime = 150;
+var tickPause = 400, closeTime = 150, openTime = 300, reopenDelay = 100;
+
+// Unticked, as in Google Tasks (measured there): it's put back under the tasks already
+// there, which slide down off it over 300ms with ease, and the list grows with them.
+function slideOpen(block) {
+  var still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (still || !openTime || !block.length || !block[0].offsetParent) return;
+  var last = block.last();
+  var height = block.get().reduce(function(sum, el) { return sum + el.getBoundingClientRect().height; }, 0);
+  var over = last.nextAll().add(last.parent().nextAll()).add(last.closest('.claire').nextAll(':visible'));
+  over.addClass('covering');
+  block.addClass('covered');
+  last.css({ transition: 'none', marginBottom: (-height) + 'px' }); // where they were
+  last[0].offsetHeight; // so the change below is animated
+  last.css({ transition: 'margin-bottom ' + openTime + 'ms ease', marginBottom: '' });
+  setTimeout(function() {
+    over.removeClass('covering');
+    block.removeClass('covered');
+    last.css({ transition: '' });
+  }, openTime);
+}
 
 // The ripple from the tick, and, when ticking, sparks bursting out of it: Google Tasks'
 // "checkmark pop", drawn our own way. Purple where Google has blue.
@@ -1077,32 +1097,76 @@ function pop(checkbox, sparks) {
   setTimeout(function() { burst.remove(); }, 500);
 }
 
-function closeThenMove(row, checkbox, done, move) {
-  var wait = Math.max(0, tickPause - (Date.now() - (row[0].tickedAt || 0)));
+// Ticked: from the moment it's ticked, not when Google replies, as Google Tasks doesn't
+// wait either. After the pause the rows below slide up over it, and it stays covered
+// until Google has said yes too: then it goes to Completed (see landed).
+function startLeaving(row, checkbox) {
   var still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var block = row.add(row.hasClass('subtask') ? $() : subtaskRows(row.children('.todo')));
-  var over = $();
-  setTimeout(function() {
-    if (checkbox.prop('checked') !== done || !$.contains(document, row[0])) return row.removeClass('leaving');
-    if (still || !closeTime) return finish();
-    // Everything after it in the card slides up over it, on the card's colour
-    over = block.last().nextAll().add(row.parent().nextAll()).add(row.closest('.claire').nextAll(':visible'));
+  var el = row[0];
+  if (still || !closeTime) return;
+  clearTimeout(el.leaveTimer);
+  el.leaveTimer = setTimeout(function() {
+    if (!checkbox.prop('checked') || !$.contains(document, el) || !row.hasClass('leaving')) return;
+    var block = row.add(row.hasClass('subtask') ? $() : subtaskRows(row.children('.todo')));
+    var over = block.last().nextAll().add(row.parent().nextAll()).add(row.closest('.claire').nextAll(':visible'));
     over.addClass('covering');
     block.addClass('covered');
-    var height = block.get().reduce(function(sum, el) { return sum + el.getBoundingClientRect().height; }, 0);
-    var last = block.last();
-    var margin = parseFloat(last.css('margin-bottom')) || 0;
+    var height = block.get().reduce(function(sum, b) { return sum + b.getBoundingClientRect().height; }, 0);
+    var last = block.last(), margin = parseFloat(last.css('margin-bottom')) || 0;
     last[0].offsetHeight; // so the change below is animated
     last.css({ transition: 'margin-bottom ' + closeTime + 'ms ease', marginBottom: (margin - height) + 'px' });
-    setTimeout(finish, closeTime);
-  }, wait);
-  function finish() {
-    over.removeClass('covering');
-    block.removeClass('covered leaving').css({ transition: '', marginBottom: '' });
-    if (checkbox.prop('checked') === done) move();
+    el.leaving = { block: block, over: over, last: last };
+    el.leaveTimer = setTimeout(function() {
+      el.leaving.gone = true;
+      if (el.landing) el.landing();
+    }, closeTime);
+  }, tickPause);
+}
+
+// Put a leaving row back as it was, its slide undone.
+function stopLeaving(row) {
+  var el = row[0], l = el.leaving;
+  clearTimeout(el.leaveTimer);
+  el.leaveTimer = el.leaving = el.landing = null;
+  row.removeClass('leaving');
+  if (!l) return;
+  l.over.removeClass('covering');
+  l.block.removeClass('covered');
+  l.last.css({ transition: '', marginBottom: '' });
+}
+
+// Google has said yes: move it once it has slid away (or now, if it wasn't going to).
+function landed(row, checkbox, move) {
+  var el = row[0];
+  function land() {
+    stopLeaving(row);
+    if (checkbox.prop('checked')) move();
     renderMeta(row);
     refreshRows();
   }
+  if (!row.hasClass('leaving') || !el.leaveTimer) return land();
+  if (el.leaving && el.leaving.gone) return land();
+  el.landing = land; // when the slide is done
+}
+
+// "Task marked uncompleted", as Google Tasks says, with Undo.
+function untickedMessage(todo) {
+  var can = function() { return live(todo).length && !live(todo).hasClass('checked'); };
+  var undo = function() { undoTick([todo], true); };
+  canUndo(can, undo);
+  if (!removals.length) showMessage('Task marked uncompleted.', 'Undo', function() { if (can()) undo(); }, 7000);
+}
+
+// Reopened: straight back to the open tasks, under those there, which slide down off it.
+function reopenRow(row, todo, card) {
+  var along = subtaskRows(todo);
+  row.removeClass('selected');
+  if (openParent(todo).length) placeSubtask(todo);
+  else card.find('.claire').prepend(row.removeClass('subtask'), along.addClass('subtask'));
+  sortDone(card);
+  renderMeta(row);
+  refreshRows(); // its size, before it slides open
+  slideOpen(row.add(along));
 }
 
 function setCompleted(checkbox, after, quiet, failed) {
@@ -1110,13 +1174,31 @@ function setCompleted(checkbox, after, quiet, failed) {
   var row = todo.parent();
   var done = checkbox.prop('checked');
   row[0].tickedAt = Date.now();
-  if (done && row.parent().is('.claire') && !openParent(todo).length) row.addClass('leaving');
+  if (done && row.parent().is('.claire') && !openParent(todo).length) {
+    row.addClass('leaving');
+    startLeaving(row, checkbox);
+  } else if (!done && row.hasClass('leaving')) stopLeaving(row); // unticked during the pause
   if (!quiet || done) pop(checkbox, done);
   var id = todo.attr('id');
   var card = todo[0].card;
   if (!done && id && todo[0].parentTask && row.parent().is('.done-list')) return reopenParent(checkbox, after, quiet);
   todo.toggleClass('checked', done);
   if (!id) return; // saveTask sends it once the task exists
+  var wasDone = row.parent().is('.done-list'), completedAt = todo[0].completedAt;
+  // Said at once, as Google Tasks does; a task with open subtasks waits to hear what
+  // Google did with them
+  var told = !quiet && (!done || !subtaskRows(todo).children('.todo').not('.checked').length);
+  if (told) {
+    if (done) offerUntick(checkbox, [], quiet);
+    else untickedMessage(todo);
+  }
+  if (!done && wasDone) { // at once, as Google Tasks does (after its ripple): put back if Google says no
+    todo[0].completedAt = undefined; // so no "Completed" line
+    clearTimeout(row[0].reopenTimer);
+    row[0].reopenTimer = setTimeout(function() {
+      if (!checkbox.prop('checked') && row.parent().is('.done-list')) reopenRow(row, todo, card);
+    }, reopenDelay);
+  }
   ticking++;
   api(todo, 'PATCH', '/' + id, done ? { status: 'completed' } : { status: 'needsAction', completed: null }, function(result) {
     ticking--;
@@ -1131,33 +1213,34 @@ function setCompleted(checkbox, after, quiet, failed) {
       var subtasks = subtaskRows(todo).children('.todo');
       var open = subtasks.not('.checked').get();
       if (open.length) followSubtasks(checkbox, open, quiet);
-      else offerUntick(checkbox, [], quiet);
-      closeThenMove(row, checkbox, done, function() {
+      else if (!told) offerUntick(checkbox, [], quiet);
+      landed(row, checkbox, function() {
         row.removeClass('selected');
         card.find('.done-list').prepend(row, subtaskRows(todo).children('.todo.checked').parent().removeClass('selected'));
         sortDone(card);
       });
-    } else { // reopened: straight back, as in Google Tasks
-      var along = subtaskRows(todo);
-      row.removeClass('selected');
-      if (openParent(todo).length) placeSubtask(todo);
-      else card.find('.claire').prepend(row.removeClass('subtask'), along.addClass('subtask'));
-      sortDone(card);
+    } else if (row.parent().is('.done-list')) {
+      clearTimeout(row[0].reopenTimer);
+      reopenRow(row, todo, card);
     }
     renderMeta(row);
     countDone(card);
-    if (!done && !quiet) {
-      var can = function() { return live(todo).length && !live(todo).hasClass('checked'); };
-      var undo = function() { undoTick([todo], true); };
-      canUndo(can, undo);
-      if (!removals.length) showMessage('Task marked uncompleted.', 'Undo', function() { if (can()) undo(); }, 7000); // as Google Tasks says
-    }
+    if (!done && !quiet && !told) untickedMessage(todo);
     if (after) after();
     if (!here && !done) reload(card); // puts it back in its place, unless more are on the way
   }, function(status) {
     ticking--;
+    if (row[0].leaving || row.hasClass('leaving')) stopLeaving(row);
     checkbox.prop('checked', !done);
     todo.toggleClass('checked', !done);
+    if (!done && wasDone) { // back to Completed
+      clearTimeout(row[0].reopenTimer);
+      todo[0].completedAt = completedAt;
+      if (row.parent().is('.claire')) card.find('.done-list').prepend(row.add(subtaskRows(todo)));
+      sortDone(card);
+      renderMeta(row);
+      refreshRows();
+    }
     showFailure('Could not update that task.', status);
     if (failed) failed();
   });

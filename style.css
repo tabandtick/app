@@ -1123,11 +1123,12 @@ li.menu-open > .more,
   padding-bottom: 2px;
 }
 
-ul.list li:focus-within > .details {
+/* Editing a task shows its details: not ticking it, dragging it or opening its menu */
+ul.list li:focus-within:not(:has(> input[type='checkbox']:focus, > .more:focus, > .menu:focus-within)) > .details {
   display: block;
 }
 
-ul.list li:focus-within > .meta {
+ul.list li:focus-within:not(:has(> input[type='checkbox']:focus, > .more:focus, > .menu:focus-within)) > .meta {
   display: none !important;
 }
 
