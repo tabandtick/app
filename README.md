@@ -18,6 +18,9 @@ server or build step. Not made or endorsed by Google.
 - **Cmd/Ctrl+Enter** ticks a task, or reopens it, and moves on to the next. With
   several tasks picked, it ticks them all.
 - **Pasting several lines** makes a task of each.
+- **A date at the end of a title** becomes its due date when you leave it: "Pay rent
+  fri", "Dentist tomorrow", "Birthday on 5 dec", "Taxes 31/1", "in 2 weeks", "next
+  week". Undo, or Cmd/Ctrl+Z, puts the words back, and they're then left alone.
 - **Coming back** to the tab after a while shows any changes made elsewhere.
 - **Without a connection,** the website still opens (`sw.js` keeps its files), says
   you're offline, and saves your changes when you're back.
