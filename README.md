@@ -76,11 +76,10 @@ to delete anything once that time is up, or when the page closes.
 - Stars, repeats, deadlines, times of day, attachments and reminders aren't in
   Google's API. Tasks assigned from Docs or Chat aren't shown.
 - A task with subtasks can't be moved to another list.
-- On the website, Google's sign-in lasts an hour, and Google gives a website no way to
-  renew it without a click. In its last five minutes, or once it has run out, your next
-  click or key renews it: a Google window opens and closes by itself. It's kept in the
-  browser, so closing the tab doesn't log you out. The extension stays signed in, as
-  Chrome looks after it.
+- On the website, Google's sign-in lasts an hour. Tab & Tick's server (below) keeps
+  you logged in by getting a fresh one before each hour is up. Without it, your next
+  click or key near the end of the hour renews it in a Google window that closes by
+  itself. The extension stays signed in, as Chrome looks after it.
 
 ## Files
 
@@ -90,6 +89,8 @@ to delete anything once that time is up, or when the page closes.
 | `auth.js` | Signing in, as a website or as an extension |
 | `tasks.js` | Lists, tasks, and everything that talks to Google Tasks |
 | `sw.js` | Keeps the website's own files, so it opens offline |
+| `cloud.js`, `supabase.js` | The website's link to Tab & Tick's server, and Supabase's library (2.49.4) |
+| `supabase/` | The server: a table for Google sign-in tokens, and the functions that use them |
 | `shared.js` | Shared lists, kept in Google Drive: answers for them as Google Tasks would |
 | `script.js` | Buttons, keys, dragging and counts |
 | `manifest.json`, `icons/` | The Chrome extension. The add-task icon is from Material Symbols, under the Apache License 2.0 in `icons/LICENSE-material-symbols.txt` |
@@ -141,6 +142,23 @@ Cloud project, the Google Drive API and the Google Picker API turned on, the
 `drive.file` scope on the consent screen, and a browser API key, limited to those
 addresses and the Picker API, as `PICKER_KEY` in `shared.js`. Pushes to `main` are published by
 GitHub Pages.
+
+## The server
+
+Tab & Tick's server is a Supabase project (`tabandtick`, London) that keeps the website
+signed in. Logging in gets a one-time code from Google's window; the function
+`google-sign-in` swaps it for Google's tokens and keeps the refresh token, encrypted
+(AES-GCM, with `TOKEN_KEY`, a function secret). `google-token` returns a fresh
+hour-long Google token for a signed-in Supabase session, and `google-sign-out` forgets
+it. Tasks never go through it. Only tokens limited to Tab & Tick's own scopes are kept,
+and ones unused for six months are deleted daily.
+
+    supabase db push --remote                 # the table, in supabase/migrations
+    supabase functions deploy google-token    # each function in supabase/functions
+
+Function secrets: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (the Website sign-in
+client's), `TOKEN_KEY`. Google is turned on as a sign-in provider in Supabase with the
+same client ID. The Chrome extension doesn't use the server.
 
 ## Copyright
 

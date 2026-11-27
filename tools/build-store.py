@@ -41,6 +41,14 @@ def extension_shared():
     return text
 
 
+def extension_page():
+    # Chrome keeps the extension signed in, so it needs no Tab & Tick Cloud
+    text = (ROOT / 'index.html').read_text()
+    text = re.sub(r"    <!-- Keeps the website signed in.*?-->\n    <script src=\"supabase.js\"></script>\n    <script src=\"cloud.js\"></script>\n", '', text, flags=re.S)
+    assert 'supabase.js' not in text and 'cloud.js' not in text
+    return text
+
+
 def main():
     out = Path(sys.argv[1])
     manifest = json.loads((ROOT / 'manifest.json').read_text())
@@ -50,8 +58,9 @@ def main():
         z.writestr('manifest.json', json.dumps(manifest, indent=2, ensure_ascii=False) + '\n')
         z.writestr('auth.js', extension_auth())
         z.writestr('shared.js', extension_shared())
+        z.writestr('index.html', extension_page())
         for name in FILES:
-            if name == 'shared.js':
+            if name in ('shared.js', 'index.html'):
                 continue
             z.write(ROOT / name, name)
     print(out, manifest['version'], manifest['oauth2']['client_id'])

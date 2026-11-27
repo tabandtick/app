@@ -850,8 +850,9 @@ await js(`focusRow('Dentist tomorrow')`); await key('Enter');
 await wait(100);
 check('...and it isn’t read again until the title changes', await dated(), ['Dentist tomorrow', '']);
 
-// ---- The website's sign-in is renewed on a key press near the end of its hour.
-// Last, as it loads the page again. Google's script is replaced by a fake.
+// ---- The website's sign-in. Logging in gets a one-time code from Google's window,
+// which Tab & Tick Cloud swaps for a token; after that, the cloud renews it quietly.
+// Last, as it loads the page again. Google's script and the cloud are replaced by fakes.
 // (Marked as logged out, so the page doesn't try the made-up token on Google as it loads.)
 await js(`localStorage.setItem('tabandtick-token', JSON.stringify({ token: 'old', until: Date.now() + 60000 }));
   localStorage.setItem('tabandtick-logged-out', '1'); true`);
@@ -860,32 +861,91 @@ await wait(1500);
 await js(`window.calls = [];
   window.google = { accounts: { oauth2: {
     hasGrantedAllScopes: function() { return true; },
-    initTokenClient: function(config) {
-      calls.push('hint:' + config.hint);
-      return { requestAccessToken: function(options) { calls.push('prompt:' + options.prompt); config.callback({ access_token: 'new', expires_in: 3600 }); } };
+    initCodeClient: function(config) {
+      calls.push('hint:' + config.login_hint);
+      return { requestCode: function() { calls.push('choose:' + config.select_account); config.callback({ code: 'one-time' }); } };
     } } } };
+  cloud.signIn = function(code, done) { calls.push('code:' + code); done({ access_token: 'new', expires_in: 3600, scope: '' }, 'alex@example.com'); };
+  cloud.has = function() { return false; }; // logged in before the cloud: renewed with Google's window
   localStorage.removeItem('tabandtick-logged-out'); auth.hint('alex@example.com'); true`);
 await key('Escape');
-check('a key in the last minutes renews the sign-in, for the same account, without asking', [await js('calls'), await js('auth.token()')],
-  [['hint:alex@example.com', 'prompt:'], 'new']);
+check('without the cloud, a key in the last minutes renews the sign-in, for the same account, without asking', [await js('calls'), await js('auth.token()')],
+  [['hint:alex@example.com', 'choose:false', 'code:one-time'], 'new']);
 await key('Escape');
-check('...and not again while the new one is fresh', await js('calls.length'), 2);
+check('...and not again while the new one is fresh', await js('calls.length'), 3);
+await js(`calls = []; cloud.has = function(email) { return email === 'alex@example.com'; };
+  cloud.token = function(email, done) { calls.push('cloud:' + email); setTimeout(function() { done({ access_token: 'quiet', expires_in: 3600, scope: '' }); }, 5); };
+  auth.expired(function(ok) { window.renewedQuietly = ok; }); true`);
+await wait(100);
+check('with the cloud, a refused token is renewed quietly, without Google’s window', [await js('renewedQuietly'), await js('auth.token()'), await js('calls')],
+  [true, 'quiet', ['cloud:alex@example.com']]);
+await js(`calls = []; localStorage.setItem('tabandtick-token', JSON.stringify({ token: 'stale', until: Date.now() - 1000 })); true`);
+await cdp('Page.reload');
+await wait(1200);
+await js(`calls = []; cloud.has = function(email) { return email === 'alex@example.com'; };
+  cloud.token = function(email, done) { calls.push('cloud:' + email); done({ access_token: 'morning', expires_in: 3600, scope: '' }); };
+  auth.hint('alex@example.com'); auth.silent(function(ok) { window.silentOk = ok; }); true`);
+check('opening it after the hour, it signs in again quietly', [await js('silentOk'), await js('auth.token()'), await js('calls')], [true, 'morning', ['cloud:alex@example.com']]);
+
+// ---- cloud.js itself, against fakes of the server's functions and Supabase's sign-in
+await js(`localStorage.setItem('tabandtick-logged-out', '1'); true`);
+await cdp('Page.reload');
+await wait(1200);
+check('cloud.js: signs in with the code, keeps a session, renews, and signs out', await js(`(function() {
+  var posted = [], stored = {};
+  var payload = btoa(JSON.stringify({ email: 'kim@example.com', sub: '42' })).replace(/=+$/, '');
+  window.fetch = function(url, options) {
+    var name = String(url).split('/functions/v1/')[1];
+    posted.push(name + ' ' + (options.headers.Authorization.indexOf('Bearer jwt-') === 0 ? 'session' : 'key') + ' ' + options.body);
+    var answers = {
+      'google-sign-in': [200, { access_token: 'g1', expires_in: 3600, scope: 's', id_token: 'h.' + payload + '.sig', kept: true }],
+      'google-token': [200, { access_token: 'g2', expires_in: 3600, scope: 's' }],
+      'google-sign-out': [200, { ok: true }]
+    }[name];
+    return Promise.resolve(new Response(JSON.stringify(answers[1]), { status: answers[0] }));
+  };
+  window.supabase = { createClient: function(url, key, options) {
+    var storageKey = options.auth.storageKey;
+    return { auth: {
+      signInWithIdToken: function(o) { localStorage.setItem(storageKey, 'x'); stored.session = 'jwt-1'; stored.idToken = o.token.split('.')[1] === payload; return Promise.resolve({}); },
+      getSession: function() { return Promise.resolve({ data: { session: stored.session ? { access_token: stored.session } : null } }); },
+      signOut: function() { stored.session = null; return Promise.resolve({}); }
+    } };
+  } };
+  return new Promise(function(resolve) {
+    cloud.signIn('code-9', function(answer, email) {
+      var had = cloud.has('kim@example.com');
+      cloud.token(email, function(fresh) {
+        cloud.signOut(email);
+        setTimeout(function() {
+          resolve([answer.access_token, email, stored.idToken, had, fresh.access_token, cloud.has('kim@example.com'), posted]);
+        }, 50);
+      });
+    });
+  });
+})()`), ['g1', 'kim@example.com', true, true, 'g2', false,
+  ['google-sign-in key {"code":"code-9"}', 'google-token session {}', 'google-sign-out session {}']]);
 
 // ---- More than one Google account. A fake Google: its window gives the account asked
-// for, or, when choosing, the one the test says; each account has its own lists.
+// for, or, when choosing, the one the test says; each account has its own lists. A fake
+// cloud keeps each one's session.
 await js(`localStorage.setItem('tabandtick-logged-out', '1'); localStorage.removeItem('tabandtick-token'); localStorage.removeItem('tabandtick-tokens'); true`);
 await cdp('Page.navigate', { url: base + 'index.html' });
 await wait(1500);
-await js(`window.windows = 0; window.choose = '';
+await js(`window.windows = 0; window.choose = ''; window.sessions = {}; window.renewals = 0;
   window.google = { accounts: { oauth2: {
     hasGrantedAllScopes: function() { return true; },
-    initTokenClient: function(config) {
-      return { requestAccessToken: function(options) {
+    initCodeClient: function(config) {
+      return { requestCode: function() {
         windows++;
-        var who = options.prompt === 'select_account' || !config.hint ? choose : config.hint;
-        config.callback({ access_token: 'token-' + who, expires_in: 3600, scope: '' });
+        var who = config.select_account || !config.login_hint ? choose : config.login_hint;
+        config.callback({ code: 'code-' + who });
       } };
     } } } };
+  cloud.signIn = function(code, done) { var who = code.slice(5); sessions[who] = true; done({ access_token: 'token-' + who, expires_in: 3600, scope: '' }, who); };
+  cloud.has = function(email) { return !!sessions[email]; };
+  cloud.token = function(email, done) { renewals++; done(sessions[email] ? { access_token: 'token-' + email, expires_in: 3600, scope: '' } : null, 'signed_out'); };
+  cloud.signOut = function(email) { delete sessions[email]; };
   var realFetch = window.fetch;
   window.fetch = function(url, options) {
     if (String(url).indexOf('userinfo') < 0) return realFetch.apply(this, arguments);
@@ -905,10 +965,8 @@ const accountsNow = () => js(`({ lists: $('#lists .name').map(function() { retur
 check('logged in as one account', await accountsNow(), { lists: 'alex’s list', others: [], me: 'alex@example.com', all: ['alex@example.com'] });
 check('the sign-in is kept, so closing the tab doesn’t log you out', await js(`JSON.parse(localStorage.getItem('tabandtick-token')).token`), 'token-alex@example.com');
 await js(`window.expiredAt = windows; auth.expired(function() {}); true`);
-check('once the hour is up, there’s no token', await js(`auth.token()`), null);
-await key('Escape');
-await wait(200);
-check('...and the next key renews it, for the same account, in one window', [await js(`auth.token()`), await js(`windows - expiredAt`)], ['token-alex@example.com', 1]);
+await wait(100);
+check('once the hour is up, it’s renewed quietly, for the same account, with no window', [await js(`auth.token()`), await js(`windows - expiredAt`)], ['token-alex@example.com', 0]);
 check('the menu offers another account', await js(`$('#add-account').is(':visible') || $('#add-account').css('display') !== 'none'`), true);
 await js(`choose = 'sam@example.com'; $('#add-account').click(); true`);
 await wait(400);
@@ -929,6 +987,7 @@ await wait(400);
 check('logging out of one goes to the other', await accountsNow(), { lists: 'alex’s list', others: [], me: 'alex@example.com', all: ['alex@example.com'] });
 await js(`logOut(); true`);
 await wait(300);
+check('logging out ends the cloud sessions too', await js(`Object.keys(sessions)`), []);
 check('logging out of the last shows Log in', [await js(`$('#authorize-div').is(':visible')`), await js(`loggedOut()`), await js(`accounts().length`)], [true, true, 0]);
 
 // ---- The extension: Chrome's account through Chrome, others through Google's page for

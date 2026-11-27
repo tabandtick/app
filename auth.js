@@ -73,7 +73,7 @@ function extensionAuth() {
   function webToken(email, interactive, done, choose) {
     var params = {
       client_id: CLIENT_ID, response_type: 'token', redirect_uri: chrome.identity.getRedirectURL(),
-      scope: scopes(email), include_granted_scopes: 'true'
+      scope: scopes(email), include_granted_scopes: 'false'
     };
     if (email) params.login_hint = email;
     if (!interactive) params.prompt = 'none';
@@ -177,9 +177,12 @@ function extensionAuth() {
   };
 }
 
-// Google gives a website a token that lasts an hour, and no way to renew it without a
-// click. It's kept in the browser, so that closing the tab or a refresh doesn't log you
-// out, and the next click or key once it's nearly or quite gone renews it: see renew().
+// Google gives a website a token that lasts an hour. Logging in gets a one-time code
+// instead, which Tab & Tick Cloud (cloud.js) swaps for the token and keeps a refresh
+// token, so a fresh one comes quietly from there before each hour is up. Without the
+// cloud (if it can't be reached, or for an account logged in before it), the next
+// click or key near the end of the hour opens Google's window to renew it: see renew().
+// The token is kept in the browser, so closing the tab doesn't log you out.
 function webAuth() {
   var KEY = 'tabandtick-token';
   var TOKENS = 'tabandtick-tokens'; // each account's, by email, to switch back without asking
@@ -194,8 +197,15 @@ function webAuth() {
     tokens = JSON.parse(localStorage.getItem(TOKENS)) || {};
   } catch (e) { /* storage is blocked, or not ours */ }
 
+  var timer = null;
+
   function keep(value) {
     saved = value;
+    clearTimeout(timer);
+    // Renew it quietly a few minutes before it runs out
+    if (value && value.until > Date.now() && hint && cloud.has(hint)) {
+      timer = setTimeout(function() { fromCloud(function() {}); }, Math.max(0, value.until - Date.now() - 4 * 60 * 1000));
+    }
     try {
       if (value) localStorage.setItem(KEY, JSON.stringify(value));
       else localStorage.removeItem(KEY);
@@ -238,6 +248,21 @@ function webAuth() {
     } catch (e) { return !!value; }
   }
 
+  // A fresh token from Tab & Tick Cloud, for the account in use
+  var fetching = null;
+  function fromCloud(done) {
+    if (!hint || !cloud.has(hint)) return done(false, 'not kept');
+    if (fetching) return fetching.push(done);
+    fetching = [done];
+    var email = hint;
+    cloud.token(email, function(answer, reason) {
+      var waiting = fetching;
+      fetching = null;
+      if (answer && email === hint) keep({ token: answer.access_token, until: Date.now() + (answer.expires_in - 60) * 1000, scope: answer.scope || '' });
+      $.each(waiting, function(i, f) { f(!!answer && email === hint, reason); });
+    });
+  }
+
   function hasDrive() {
     return !!(token() && saved.scope && saved.scope.split(' ').indexOf(DRIVE) >= 0);
   }
@@ -246,30 +271,44 @@ function webAuth() {
     if (blocked || waiting.failed) return done(false, 'Google\u2019s sign-in script was blocked');
     if (!ready && window.google && google.accounts) ready = true;
     if (!ready) return waiting.push(function(blocked) { login(done, choose, blocked); });
-    google.accounts.oauth2.initTokenClient({
+    google.accounts.oauth2.initCodeClient({
       client_id: CLIENT_ID,
       scope: SCOPES + (wantsDrive() ? ' ' + DRIVE : ''),
-      include_granted_scopes: true,
-      hint: choose ? '' : hint,
+      // Only these: not others given to the same Google Cloud project (such as
+      // publishing to the Chrome Web Store), which the server would then hold too
+      include_granted_scopes: false,
+      ux_mode: 'popup',
+      select_account: !!choose,
+      login_hint: choose ? '' : hint,
       callback: function(response) {
         if (response.error) return done(false, response.error);
         if (!google.accounts.oauth2.hasGrantedAllScopes(response, SCOPE)) return done(false, 'access to tasks wasn\u2019t ticked');
-        keep({ token: response.access_token, until: Date.now() + (response.expires_in - 60) * 1000, scope: response.scope || '' });
-        done(true);
+        cloud.signIn(response.code, function(answer, email) {
+          if (!answer) return done(false, email); // the reason, then
+          if (email) hint = email; // whichever account was chosen in Google's window
+          keep({ token: answer.access_token, until: Date.now() + (answer.expires_in - 60) * 1000, scope: answer.scope || '' });
+          done(true);
+        });
       },
       error_callback: function(error) { done(false, error && error.type); }
-    }).requestAccessToken({ prompt: choose ? 'select_account' : '' });
+    }).requestCode();
   }
 
   return {
-    silent: function(done) { done(!!token(), 'no token'); },
+    silent: function(done) {
+      if (token()) return done(true);
+      fromCloud(function(ok, reason) { done(ok, reason || 'no token'); });
+    },
     login: function(done, choose) { login(done, choose); },
-    expired: function(done) { // a new token needs a click: see renew()
+    expired: function(done) {
       if (saved) keep($.extend({}, saved, { until: 0 }));
-      done(false, 'expired');
+      fromCloud(function(ok) { done(ok, ok ? '' : 'expired'); }); // without it, a new token needs a click: see renew()
     },
     token: token,
-    logout: function() { keep(null); },
+    logout: function() {
+      if (hint) cloud.signOut(hint);
+      keep(null);
+    },
     canSwitch: true,
     // The token just got is this account's: called once Google says whose it is.
     remember: function(email) {
@@ -298,6 +337,7 @@ function webAuth() {
         return done(true);
       }
       keep(null);
+      if (cloud.has(email)) return fromCloud(function(ok) { ok ? done(true) : login(done, false); });
       login(done, false);
     },
     add: function(done) {
@@ -306,6 +346,7 @@ function webAuth() {
       login(done, true);
     },
     forget: function(email) {
+      cloud.signOut(email);
       delete tokens[email];
       keepTokens();
       try { localStorage.removeItem(DRIVE_KEY + email); } catch (e) { /* storage is blocked */ }
@@ -324,6 +365,7 @@ function webAuth() {
     // agreed before, you aren't asked again: the window closes by itself. done(ok).
     renew: function(done) {
       if (renewing || !saved || !hint || saved.until - Date.now() > 5 * 60 * 1000) return;
+      if (cloud.has(hint)) return fromCloud(function(ok) { if (done) done(ok); }); // quietly, no window
       renewing = true;
       login(function(ok) {
         renewing = false;
