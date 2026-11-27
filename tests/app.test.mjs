@@ -936,6 +936,7 @@ await js(`window.windows = 0; window.choose = ''; window.sessions = {}; window.r
   window.google = { accounts: { oauth2: {
     hasGrantedAllScopes: function() { return true; },
     initCodeClient: function(config) {
+      window.lastConfig = config;
       return { requestCode: function() {
         windows++;
         var who = config.select_account || !config.login_hint ? choose : config.login_hint;
@@ -963,6 +964,7 @@ await js(`window.windows = 0; window.choose = ''; window.sessions = {}; window.r
 await wait(400);
 const accountsNow = () => js(`({ lists: $('#lists .name').map(function() { return this.textContent; }).get().join(), others: $('#other-accounts .other-account').map(function() { return $(this).attr('data-email'); }).get(), me: $('#account-email').text(), all: accounts().map(function(a) { return a.email; }) })`);
 check('logged in as one account', await accountsNow(), { lists: 'alex’s list', others: [], me: 'alex@example.com', all: ['alex@example.com'] });
+check('logging in keeps what you agreed to before, such as Drive for shared lists', await js('lastConfig.include_granted_scopes'), true);
 check('the sign-in is kept, so closing the tab doesn’t log you out', await js(`JSON.parse(localStorage.getItem('tabandtick-token')).token`), 'token-alex@example.com');
 await js(`window.expiredAt = windows; auth.expired(function() {}); true`);
 await wait(100);
