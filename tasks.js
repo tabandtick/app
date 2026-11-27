@@ -1061,6 +1061,22 @@ var ticking = 0; // ticks Google hasn't answered yet
 // to Completed. It doesn't shrink or fade: it's covered. Tests set these to 0.
 var tickPause = 400, closeTime = 150;
 
+// The ripple from the tick, and, when ticking, sparks bursting out of it: Google Tasks'
+// "checkmark pop", drawn our own way. Purple where Google has blue.
+var SPARKS = ['var(--accent)', '#ef6f6c', '#ef6f6c', '#f4b740', '#3fbf8f', '#ef6f6c', '#f4b740', '#ef6f6c'];
+function pop(checkbox, sparks) {
+  var row = checkbox.parent(), box = checkbox[0];
+  if (!box.offsetParent) return;
+  var burst = $('<span class="pop" aria-hidden="true"><span class="ripple"></span></span>').css({
+    left: box.offsetLeft + box.offsetWidth / 2, top: box.offsetTop + box.offsetHeight / 2
+  });
+  if (sparks) $.each(SPARKS, function(i, colour) {
+    burst.append($('<span class="spark"></span>').css({ background: colour, '--a': (i * 45) + 'deg' }));
+  });
+  row.append(burst);
+  setTimeout(function() { burst.remove(); }, 500);
+}
+
 function closeThenMove(row, checkbox, done, move) {
   var wait = Math.max(0, tickPause - (Date.now() - (row[0].tickedAt || 0)));
   var still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -1095,6 +1111,7 @@ function setCompleted(checkbox, after, quiet, failed) {
   var done = checkbox.prop('checked');
   row[0].tickedAt = Date.now();
   if (done && row.parent().is('.claire') && !openParent(todo).length) row.addClass('leaving');
+  if (!quiet || done) pop(checkbox, done);
   var id = todo.attr('id');
   var card = todo[0].card;
   if (!done && id && todo[0].parentTask && row.parent().is('.done-list')) return reopenParent(checkbox, after, quiet);
@@ -1120,14 +1137,12 @@ function setCompleted(checkbox, after, quiet, failed) {
         card.find('.done-list').prepend(row, subtaskRows(todo).children('.todo.checked').parent().removeClass('selected'));
         sortDone(card);
       });
-    } else {
-      closeThenMove(row, checkbox, done, function() {
-        var along = subtaskRows(todo);
-        row.removeClass('selected');
-        if (openParent(todo).length) placeSubtask(todo);
-        else card.find('.claire').prepend(row.removeClass('subtask'), along.addClass('subtask'));
-        sortDone(card);
-      });
+    } else { // reopened: straight back, as in Google Tasks
+      var along = subtaskRows(todo);
+      row.removeClass('selected');
+      if (openParent(todo).length) placeSubtask(todo);
+      else card.find('.claire').prepend(row.removeClass('subtask'), along.addClass('subtask'));
+      sortDone(card);
     }
     renderMeta(row);
     countDone(card);
