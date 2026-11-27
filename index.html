@@ -161,6 +161,21 @@
     <!-- For screen readers: what picking and moving did, which can't be seen -->
     <div id="announce" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
+    <script>
+      // As an app on an iPhone's home screen, the page goes under the clock and battery,
+      // which blur what's beneath them. iOS 26 says that space is 0, so then it's
+      // measured here: 60 under a notch or Dynamic Island, 20 otherwise, and a little
+      // more below the blur.
+      (function() {
+        if (!navigator.standalone) return;
+        var probe = document.createElement('div');
+        probe.style.cssText = 'position:fixed;top:0;height:env(safe-area-inset-top);visibility:hidden';
+        document.body.appendChild(probe);
+        var top = probe.offsetHeight || (screen.height >= 812 ? 60 : 20);
+        probe.remove();
+        document.documentElement.style.setProperty('--top', (top + 8) + 'px');
+      })();
+    </script>
     <script src="jquery.js"></script>
     <script src="auth.js"></script>
     <script src="script.js"></script>

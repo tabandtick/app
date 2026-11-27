@@ -49,6 +49,11 @@
   box-sizing: border-box;
 }
 
+/* Room at the top for an iPhone's clock and battery: see the top of script.js */
+:root {
+  --top: env(safe-area-inset-top, 0px);
+}
+
 body {
   min-height: 100vh;
   margin: 0;
@@ -89,8 +94,8 @@ button:hover {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: calc(64px + env(safe-area-inset-top, 0px));
-  padding: env(safe-area-inset-top, 0px) 18px 0 20px; /* below an iPhone's clock and battery, as an app on its home screen */
+  height: calc(64px + var(--top));
+  padding: var(--top) 18px 0 20px; /* below an iPhone's clock and battery, as an app on its home screen */
 }
 
 h1 {
@@ -346,7 +351,7 @@ ul.list li.no-match {
 #side {
   display: none;
   position: absolute;
-  top: calc(64px + env(safe-area-inset-top, 0px));
+  top: calc(64px + var(--top));
   left: 0;
   width: 256px;
   padding: 12px 16px 0;
@@ -1350,7 +1355,7 @@ dialog input:focus {
   .signed-in #side {
     display: none;
     z-index: 3;
-    top: calc(64px + env(safe-area-inset-top, 0px));
+    top: calc(64px + var(--top));
     left: 8px;
     padding: 14px 8px;
     border: 1px solid transparent;
