@@ -1041,4 +1041,21 @@ $(document).ready(function() {
 	updateToDoCount();
 	checkAuth();
 
+	// Without a connection: the website still opens (sw.js), and changes wait
+	var local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+	if ('serviceWorker' in navigator && (location.protocol === 'https:' || local)) {
+		navigator.serviceWorker.register('sw.js').catch(function() { /* only a convenience */ });
+	}
+	var offlineShown = false;
+	$(window).on('offline', function() {
+		offlineShown = true;
+		showMessage('You\u2019re offline. Changes will be saved when you\u2019re back.');
+	}).on('online', function() {
+		if (offlineShown) hideMessage();
+		offlineShown = false;
+		if (!tasksLoaded) return checkAuth();
+		saveAll();
+		refreshAll();
+	});
+
 });

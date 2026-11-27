@@ -19,6 +19,8 @@ server or build step. Not made or endorsed by Google.
   several tasks picked, it ticks them all.
 - **Pasting several lines** makes a task of each.
 - **Coming back** to the tab after a while shows any changes made elsewhere.
+- **Without a connection,** the website still opens (`sw.js` keeps its files), says
+  you're offline, and saves your changes when you're back.
 - **On a phone or tablet,** hold a task, or choose **Select** in its menu, to pick it; tap others
   to add them, then **Tick** or **Delete** them from the bar at the bottom.
 - **Search** at the top, or **/**, shows only the tasks whose title or notes have every word.
@@ -84,6 +86,7 @@ to delete anything once that time is up, or when the page closes.
 | `index.html`, `style.css` | The page |
 | `auth.js` | Signing in, as a website or as an extension |
 | `tasks.js` | Lists, tasks, and everything that talks to Google Tasks |
+| `sw.js` | Keeps the website's own files, so it opens offline |
 | `shared.js` | Shared lists, kept in Google Drive: answers for them as Google Tasks would |
 | `script.js` | Buttons, keys, dragging and counts |
 | `manifest.json`, `icons/` | The Chrome extension. The add-task icon is from Material Symbols, under the Apache License 2.0 in `icons/LICENSE-material-symbols.txt` |
