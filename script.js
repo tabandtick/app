@@ -814,7 +814,7 @@ $(document).ready(function() {
 		else if (how === 'rename') card.find('.list-title').focus().select();
 		else if (how === 'hide') showList(card[0].list, false);
 		else deleteList(card[0].list);
-	}).on('click', '.card-head .share', function() {
+	}).on('click', '.card-head .share, .card-head .sharers', function() {
 		shareList($(this).closest('.card')[0].list);
 	}).on('click', '.new-task, .empty-new', function() {
 		newTask($(this).closest('.card'));

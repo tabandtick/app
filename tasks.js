@@ -256,6 +256,7 @@ function showLists() {
     card.find('.claire').attr('aria-label', list.title);
     card.toggleClass('shared', !!list.shared);
     card.find('[data-list-do=delete]').text(list.shared && !list.owned ? 'Leave list' : 'Delete list');
+    if (made && list.shared) showSharers(card);
     card.find('.done-list').attr('aria-label', 'Completed in ' + list.title);
     if (made) loadCard(card);
   });
@@ -464,7 +465,7 @@ function shareList(id) {
     people.empty().append($('<li class="loading"></li>').text('Loading…'));
     shared.people(id, function(all) {
       people.empty().append($.map(all, function(p) {
-        var row = $('<li></li>').append($('<span class="who"></span>').append(
+        var row = $('<li></li>').append(face(p, 36), $('<span class="who"></span>').append(
           $('<span class="name"></span>').text(p.name || p.email),
           p.name && p.email ? $('<span class="email"></span>').text(p.email) : null));
         if (p.role === 'owner') row.append($('<span class="role"></span>').text('Owner'));
@@ -473,6 +474,7 @@ function shareList(id) {
         }));
         return row[0];
       }));
+      showSharers(cardFor(id), all);
     }, function() {
       people.empty();
     });
@@ -508,6 +510,30 @@ function shareList(id) {
   showPeople();
   dialog[0].showModal();
   if (!field.prop('disabled')) field.focus();
+}
+
+// A person's Google picture, or their initial if there's none or it won't load.
+function face(person, size) {
+  var initial = $('<span class="face" aria-hidden="true"></span>').text((person.name || person.email || '?').charAt(0).toUpperCase())
+    .css({ width: size, height: size, fontSize: Math.round(size * 0.45) });
+  if (!person.photo) return initial;
+  var img = $('<img class="face" alt="" referrerpolicy="no-referrer">').attr({ src: person.photo, width: size, height: size });
+  img.on('error', function() { img.replaceWith(initial); });
+  return img;
+}
+
+// The faces of who else has a shared list, by its Share button, as in Google Docs.
+// Pass who if already known.
+function showSharers(card, who) {
+  if (!card.length || !card.hasClass('shared')) return;
+  if (!who) return shared.people(card[0].list, function(all) { showSharers(card, all); }, function() {});
+  var me = currentAccount(), others = $.grep(who, function(p) { return p.type === 'user' && p.email !== me; });
+  var shown = others.slice(0, 3), more = others.length - shown.length;
+  var names = $.map(others, function(p) { return p.name || p.email; });
+  card.find('.sharers').empty().attr('title', names.length ? 'Shared with ' + names.join(', ') : null)
+    .attr('aria-label', names.length ? 'Shared with ' + names.join(', ') : null)
+    .append($.map(shown, function(p) { return face(p, 28)[0]; }))
+    .append(more > 0 ? $('<span class="face more-people" aria-hidden="true"></span>').text('+' + more) : null);
 }
 
 // A link to a shared list: tabandtick.github.io/app/#open=<its file>. Kept until
@@ -575,6 +601,7 @@ function refreshAll() {
   });
   $('#cards .card').each(function() {
     if (this.loaded) reload($(this));
+    if ($(this).hasClass('shared')) showSharers($(this));
   });
   shared.check();
 }

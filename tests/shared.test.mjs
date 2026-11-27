@@ -79,7 +79,7 @@ function fake(req, res, path, body) {
       const p = JSON.parse(body);
       if (!p.emailAddress.endsWith('@example.com')) return fail(400, 'Bad Request. User message: "This email isn’t a Google account."');
       const name = p.emailAddress.split('@')[0];
-      f.perms.push({ id: 'p-' + name, role: p.role, type: 'user', emailAddress: p.emailAddress, displayName: name[0].toUpperCase() + name.slice(1) });
+      f.perms.push({ id: 'p-' + name, role: p.role, type: 'user', emailAddress: p.emailAddress, displayName: name[0].toUpperCase() + name.slice(1), photoLink: base + 'icons/icon-32.png' });
       f.note = q.get('emailMessage');
       return json(200, {});
     }
@@ -170,6 +170,7 @@ async function person(name, hash = '') {
     auth.canShare = true;
     auth.silent = function(done) { done(true); };
     loadProfile = function() {};
+    currentAccount('${name}@example.com');
     // Picking the file in Google's picker lets this person open it
     shared.pick = function(id, done) { fetch('${base}grant?user=${name}&id=' + id).then(function() { done(id); }); };
     hideMessage(); $('#authorize-div').hide();
@@ -240,7 +241,7 @@ await wait(600);
 check('the list is made in Drive, and shown', [Object.values(files).map(f => f.name), await sidebar(alex)], [['Shopping (Tab & Tick)'], 'My Tasks, Shopping']);
 check('the share dialog opens', await alex.js(`$('#share')[0].open && $('#share h2').text()`), 'Share “Shopping”');
 await wait(300);
-check('it lists Alex as the owner', await alex.js(`$('#share .people li').map(function() { return $(this).text(); }).get()`), ['Alexalex@example.comOwner']);
+check('it lists Alex as the owner', await alex.js(`$('#share .people li').map(function() { return $(this).text(); }).get()`), ['AAlexalex@example.comOwner']);
 await alex.js(`$('#share input[type=email]').focus(); true`);
 await alex.type('nobody@elsewhere.net');
 await alex.js(`$('#share form')[0].requestSubmit(); true`);
@@ -255,6 +256,8 @@ check('sharing gives Sam access, and Drive’s email has the link', [files[fileI
   [['p-alex:owner', 'p-sam:writer'], 'Open it in Tab & Tick: ' + base + 'index.html#open=' + fileId]);
 await shot(alex, 'share-dialog');
 check('and Sam is listed', await alex.js(`$('#share .people .name').map(function() { return this.textContent; }).get()`), ['Alex', 'Sam']);
+check('the dialog shows each person’s picture, or their initial', await alex.js(`$('#share .people li').map(function() { var f = $(this).children('.face'); return f.is('img') ? 'picture' : f.text(); }).get()`), ['A', 'picture']);
+check('and the list shows Sam’s picture by its Share button', await alex.js(`[$('.card.shared .sharers img.face').length, $('.card.shared .sharers').attr('title')]`), [1, 'Shared with Sam']);
 await alex.js(`$('#share .close').click(); true`);
 
 // Alex writes the list, as with any other
@@ -273,6 +276,8 @@ await sam.js(`$('#dialog form')[0].requestSubmit(); true`);
 await wait(800);
 check('Sam sees the list, as Alex has it', [await sidebar(sam), await seen(sam, 'Shopping')], ['My Tasks, Shopping', 'Milk, Bread, -Seeded']);
 check('the link is gone from the address', await sam.js(`location.hash`), '');
+await wait(300);
+check('Sam’s list shows Alex, not Sam', await sam.js(`[$('.card.shared .sharers .face').text(), $('.card.shared .sharers').attr('title')]`), ['A', 'Shared with Alex']);
 await shot(sam, 'sam-list');
 check('Sam’s menu says Leave, not Delete', await sam.js(`$('.card.shared [data-list-do=delete]').text()`), 'Leave list');
 

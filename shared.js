@@ -533,9 +533,9 @@ var shared = (function() {
   // Who has the list: done([{ id, name, email, role }]).
   function people(listId, done, failed) {
     drive('GET', 'drive/v3/files/' + listId.slice(PREFIX.length) + '/permissions?fields=' +
-      encodeURIComponent('permissions(id,type,role,emailAddress,displayName)'), null, function(result) {
+      encodeURIComponent('permissions(id,type,role,emailAddress,displayName,photoLink)'), null, function(result) {
       done($.map((result && result.permissions) || [], function(p) {
-        return { id: p.id, name: p.displayName || '', email: p.emailAddress || '', role: p.role, type: p.type };
+        return { id: p.id, name: p.displayName || '', email: p.emailAddress || '', role: p.role, type: p.type, photo: p.photoLink || '' };
       }));
     }, failed);
   }

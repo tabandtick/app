@@ -567,6 +567,54 @@ body:not(.can-share) .share-only {
   color: var(--muted);
 }
 
+/* On a shared list, the faces of who else has it, overlapping, as in Google Docs */
+.card-head .sharers {
+  display: flex;
+  flex: none;
+  align-items: center;
+  padding: 0 4px 0 0;
+  border-radius: 16px;
+  background: none;
+}
+
+.card-head .sharers:empty,
+.card:not(.shared) .card-head .sharers {
+  display: none;
+}
+
+.card-head .sharers:hover {
+  background: none;
+}
+
+.card-head .sharers .face + .face {
+  margin-left: -8px;
+}
+
+.face {
+  display: grid;
+  flex: none;
+  place-items: center;
+  border: 2px solid var(--card);
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--accent);
+  color: var(--card);
+  font-weight: 600;
+  box-sizing: content-box;
+}
+
+.face.more-people {
+  width: 28px;
+  height: 28px;
+  background: var(--raised);
+  color: var(--text);
+  font-size: 12px;
+}
+
+#share .people .face {
+  border: none;
+}
+
 /* On a shared list, a Share button by its name */
 .card-head .share {
   padding: 6px 14px;
