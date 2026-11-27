@@ -1,6 +1,15 @@
 // Shared by Tab & Tick's sign-in functions: which sites may call them, encrypting
 // refresh tokens, talking to Google, and finding who's calling.
 import { createClient, type SupabaseClient, type User } from 'npm:@supabase/supabase-js@2.49.4';
+import { createRemoteJWKSet, jwtVerify } from 'npm:jose@5.9.6';
+
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
+
+// Work done after replying, so the browser doesn't wait for it
+export function later(work: PromiseLike<unknown>): void {
+  const promise = Promise.resolve(work).catch((error) => console.error('later', error));
+  try { EdgeRuntime.waitUntil(promise); } catch { /* not in Supabase's runtime: it still runs */ }
+}
 
 // The website, and local copies for development
 const ORIGINS = [/^https:\/\/tabandtick\.github\.io$/, /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/];
@@ -93,6 +102,23 @@ export async function google(params: Record<string, string>): Promise<GoogleAnsw
 export function whoIs(idToken: string): { sub: string; email: string } {
   const payload = JSON.parse(atob(idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
   return { sub: payload.sub, email: payload.email };
+}
+
+// The Supabase user's ID from their session, checked here against the project's
+// public signing key, without asking Supabase. Only the ID (sub) is trusted: the
+// session's user_metadata can be changed by its owner.
+let keys: ReturnType<typeof createRemoteJWKSet> | null = null;
+export async function sessionUserId(req: Request): Promise<string | null> {
+  const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer /, '');
+  if (!jwt) return null;
+  try {
+    const url = env('SUPABASE_URL');
+    keys = keys || createRemoteJWKSet(new URL(url + '/auth/v1/.well-known/jwks.json'));
+    const { payload } = await jwtVerify(jwt, keys, { issuer: url + '/auth/v1', audience: 'authenticated' });
+    return typeof payload.sub === 'string' ? payload.sub : null;
+  } catch {
+    return null;
+  }
 }
 
 // The Supabase user calling, from their session, and their Google account's ID
