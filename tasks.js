@@ -626,7 +626,7 @@ function tickAll(todos, done) {
   function undo() { tickAll($($.map(list, function(el) { return live($(el)).get(); })), !done); }
   canUndo(can, undo);
   if (removals.length) return; // keep the button for a delete
-  showMessage((list.length > 1 ? list.length + ' tasks ' : 'Task ') + (done ? 'completed.' : 'reopened.'), 'Undo', function() { if (can()) undo(); }, 7000);
+  showMessage((list.length > 1 ? list.length + ' tasks ' : 'Task ') + (done ? 'completed.' : 'marked uncompleted.'), 'Undo', function() { if (can()) undo(); }, 7000);
 }
 
 function logOut() {
@@ -1146,7 +1146,12 @@ function setCompleted(checkbox, after, quiet, failed) {
     }
     renderMeta(row);
     countDone(card);
-    if (!done && !quiet) canUndo(function() { return live(todo).length && !live(todo).hasClass('checked'); }, function() { undoTick([todo], true); });
+    if (!done && !quiet) {
+      var can = function() { return live(todo).length && !live(todo).hasClass('checked'); };
+      var undo = function() { undoTick([todo], true); };
+      canUndo(can, undo);
+      if (!removals.length) showMessage('Task marked uncompleted.', 'Undo', function() { if (can()) undo(); }, 7000); // as Google Tasks says
+    }
     if (after) after();
     if (!here && !done) reload(card); // puts it back in its place, unless more are on the way
   }, function(status) {
