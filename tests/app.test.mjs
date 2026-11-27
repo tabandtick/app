@@ -85,6 +85,7 @@ await cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
 await cdp('Page.navigate', { url: base + 'index.html' });
 await wait(1500);
 await js(`
+  tickPause = closeTime = 0; // the pause and slide on ticking: timed in their own test
   window.sent = [];
   // A small Google: refuses a move whose parent is a subtask, or whose previous
   // task isn't under that parent, as the real one does.
@@ -849,6 +850,29 @@ check('...and Undo puts it back', await dated(), ['Dentist tomorrow', '']);
 await js(`focusRow('Dentist tomorrow')`); await key('Enter');
 await wait(100);
 check('...and it isn’t read again until the title changes', await dated(), ['Dentist tomorrow', '']);
+
+// ---- Ticking, as in Google Tasks: a pause, ticked but not struck through, then the
+// row closes up and goes to Completed
+await reset([{ id: 'k1', title: 'Alpha', position: '1' }, { id: 'k2', title: 'Bravo', position: '2' }]);
+await js(`tickPause = 400; closeTime = 150; $(${rowOf('Alpha')}).children('input[type=checkbox]').click(); true`);
+await wait(100);
+const ticking = () => js(`(function() {
+  var row = $('.todo').filter(function() { return this.value === 'Alpha'; }).parent();
+  return { where: row.parent().is('.claire') ? 'open' : 'completed', struck: getComputedStyle(row.children('.todo')[0]).textDecorationLine,
+    ticked: row.children('input[type=checkbox]').prop('checked'), squashed: row[0].offsetHeight < 20 };
+})()`);
+check('just ticked: still in place, ticked, not struck through', await ticking(), { where: 'open', struck: 'none', ticked: true, squashed: false });
+await wait(420);
+check('...then its row closes up', (await ticking()).squashed, true);
+await wait(300);
+check('...and it goes to Completed', (await ticking()).where, 'completed');
+await reset([{ id: 'k3', title: 'Alpha', position: '1' }, { id: 'k4', title: 'Bravo', position: '2' }]);
+await js(`$(${rowOf('Alpha')}).children('input[type=checkbox]').click(); true`);
+await wait(150);
+await js(`$(${rowOf('Alpha')}).children('input[type=checkbox]').click(); true`);
+await wait(700);
+check('unticking it during the pause keeps it where it was', [(await ticking()).where, (await s()).order.trim()], ['open', 'Alpha Bravo']);
+await js(`tickPause = closeTime = 0; true`);
 
 // ---- The website's sign-in. Logging in gets a one-time code from Google's window,
 // which Tab & Tick Cloud swaps for a token; after that, the cloud renews it quietly.

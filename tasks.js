@@ -911,7 +911,7 @@ function reload(card) {
 }
 
 function busy() {
-  return removals.length > 0 || moves.length > 0 || ticking > 0 || $('.claire .todo').filter(function() {
+  return removals.length > 0 || moves.length > 0 || ticking > 0 || $('li.leaving').length > 0 || $('.claire .todo').filter(function() {
     return !this.id || this.saving || isUnsaved($(this));
   }).length > 0;
 }
@@ -1056,10 +1056,36 @@ function sortDone(card) {
 // a ticked subtask stays with its open parent.
 var ticking = 0; // ticks Google hasn't answered yet
 
+// As in Google Tasks: a ticked task stays a moment, ticked but not struck through,
+// then its row closes up and the tasks below slide into its place. (Measured there:
+// about 400ms, then 150ms.) Tests set these to 0.
+var tickPause = 400, closeTime = 150;
+
+// Close the row up, then do the move. Not if it was unticked again in the meantime.
+function closeThenMove(row, checkbox, done, move) {
+  var wait = Math.max(0, tickPause - (Date.now() - (row[0].tickedAt || 0)));
+  var still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  setTimeout(function() {
+    if (checkbox.prop('checked') !== done || !$.contains(document, row[0])) return row.removeClass('leaving');
+    if (still || !closeTime) return finish();
+    row.css({ height: row[0].offsetHeight + 'px', overflow: 'hidden' });
+    row[0].offsetHeight; // so the change below is animated
+    row.css({ height: 0, paddingTop: 0, paddingBottom: 0, transition: 'height ' + closeTime + 'ms ease, padding ' + closeTime + 'ms ease' });
+    setTimeout(finish, closeTime);
+  }, wait);
+  function finish() {
+    row.removeClass('leaving').css({ height: '', overflow: '', paddingTop: '', paddingBottom: '', transition: '' });
+    if (checkbox.prop('checked') === done) move();
+    refreshRows();
+  }
+}
+
 function setCompleted(checkbox, after, quiet, failed) {
   var todo = checkbox.siblings('.todo');
   var row = todo.parent();
   var done = checkbox.prop('checked');
+  row[0].tickedAt = Date.now();
+  if (done && row.parent().is('.claire') && !openParent(todo).length) row.addClass('leaving');
   var id = todo.attr('id');
   var card = todo[0].card;
   if (!done && id && todo[0].parentTask && row.parent().is('.done-list')) return reopenParent(checkbox, after, quiet);
@@ -1077,18 +1103,22 @@ function setCompleted(checkbox, after, quiet, failed) {
       if (done) offerUntick(checkbox, [], quiet);
     } else if (done) {
       var subtasks = subtaskRows(todo).children('.todo');
-      row.removeClass('selected');
-      card.find('.done-list').prepend(row, subtasks.filter('.checked').parent().removeClass('selected'));
-      sortDone(card);
       var open = subtasks.not('.checked').get();
       if (open.length) followSubtasks(checkbox, open, quiet);
       else offerUntick(checkbox, [], quiet);
+      closeThenMove(row, checkbox, done, function() {
+        row.removeClass('selected');
+        card.find('.done-list').prepend(row, subtaskRows(todo).children('.todo.checked').parent().removeClass('selected'));
+        sortDone(card);
+      });
     } else {
-      var along = subtaskRows(todo);
-      row.removeClass('selected');
-      if (openParent(todo).length) placeSubtask(todo);
-      else card.find('.claire').prepend(row.removeClass('subtask'), along.addClass('subtask'));
-      sortDone(card);
+      closeThenMove(row, checkbox, done, function() {
+        var along = subtaskRows(todo);
+        row.removeClass('selected');
+        if (openParent(todo).length) placeSubtask(todo);
+        else card.find('.claire').prepend(row.removeClass('subtask'), along.addClass('subtask'));
+        sortDone(card);
+      });
     }
     renderMeta(row);
     countDone(card);

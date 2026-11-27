@@ -988,6 +988,12 @@ ul.list input[type='checkbox']:checked {
   text-decoration: line-through;
 }
 
+/* Just ticked, about to go to Completed: not struck through, as in Google Tasks */
+li.leaving .todo.checked {
+  color: var(--text);
+  text-decoration: none;
+}
+
 /* Plain again while it is being edited, as in Google Tasks */
 .todo.checked:focus {
   color: var(--text);
