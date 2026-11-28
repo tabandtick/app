@@ -299,6 +299,7 @@ function newCard(list) {
   card[0].loaded = false;
   card[0].doneShown = 0;
   card[0].doneWaiting = [];
+  if (shared.isShared(list.id)) card[0].seenBefore = lastSeen(list.id);
   return card;
 }
 
@@ -559,7 +560,7 @@ function face(person, size) {
     .css({ width: size, height: size, fontSize: Math.round(size * 0.45) });
   if (!person.photo) return initial;
   var img = $('<img class="face" alt="" referrerpolicy="no-referrer">').attr({ src: person.photo, width: size, height: size });
-  img.on('error', function() { img.replaceWith(initial); });
+  img.on('error', function() { img.replaceWith(initial.attr({ 'class': img.attr('class'), title: img.attr('title') || null })); });
   return img;
 }
 
@@ -1448,10 +1449,103 @@ function taskRow(task, card) {
   todo[0].parentTask = todo[0].googleParent = task.parent;
   todo[0].position = task.position;
   todo[0].completedAt = done ? doneDate(task) : undefined;
+  todo[0].changedBy = task.changedBy;
+  todo[0].changedAt = task.updated;
   todo[0].saved = { title: todo.val(), notes: notes.val(), due: due.val() };
   todo[0].lastTitle = todo.val();
   renderMeta(row);
+  showChanger(row);
   return row;
+}
+
+// ---- Who did what, in a shared list
+
+// When you last looked at a shared list, so changes since show whose they were. The
+// first time, that's now: what was there before isn't news. Kept as you leave.
+function lastSeen(listId) {
+  var key = 'tabandtick-seen:' + currentAccount() + ':' + listId, was = null;
+  try {
+    was = Number(localStorage.getItem(key)) || null;
+    localStorage.setItem(key, String(Date.now()));
+  } catch (e) { /* storage is blocked */ }
+  return was || Date.now();
+}
+
+document.addEventListener('visibilitychange', function() {
+  if (!document.hidden) return;
+  $('#cards .card').each(function() {
+    if (!shared.isShared(this.list)) return;
+    try { localStorage.setItem('tabandtick-seen:' + currentAccount() + ':' + this.list, String(Date.now())); } catch (e) { /* storage is blocked */ }
+  });
+});
+
+// Someone else in the list, if they changed this task.
+function changer(todo) {
+  var el = todo[0], list = el && el.card && el.card[0] && el.card[0].list;
+  if (!el.changedBy || !shared.isShared(list) || el.changedBy === shared.me()) return null;
+  return shared.who(list, el.changedBy);
+}
+
+function firstName(person) {
+  return (person.name || '').split(' ')[0] || person.email.split('@')[0];
+}
+
+function ago(when) {
+  var minutes = Math.round((Date.now() - when) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return minutes + ' min ago';
+  var hours = Math.round(minutes / 60);
+  return hours + (hours === 1 ? ' hour ago' : ' hours ago');
+}
+
+// Their face, on a task they changed since you last looked.
+function showChanger(row) {
+  var todo = row.children('.todo'), person = changer(todo), when = Date.parse(todo[0].changedAt || '');
+  var card = todo[0].card;
+  row.children('.changer').remove();
+  if (!person || !card || !(when > card[0].seenBefore)) return;
+  var said = (person.name || person.email) + (todo.hasClass('checked') ? ' ticked this, ' : ' changed this, ') + ago(when);
+  row.children('.more').before(face(person, 18).addClass('changer').attr({ title: said, role: 'img', 'aria-label': said, 'aria-hidden': null }));
+}
+
+// What someone else just did, said at the bottom as Google Tasks says what you did:
+// "Justin ticked “Milk”". Changes close together are said at once. Not over a
+// message with Undo in it, and not while the page is hidden.
+var heard = { list: null, user: null, changes: {}, order: [], timer: null };
+
+function heardChange(listId, user, taskId, what, title) {
+  if (document.hidden || !cardFor(listId).length) return;
+  if (heard.list !== listId || heard.user !== user) {
+    clearTimeout(heard.timer);
+    heard = { list: listId, user: user, changes: {}, order: [], timer: null };
+  }
+  var change = heard.changes[taskId];
+  if (!change) {
+    heard.changes[taskId] = { what: what, title: title };
+    heard.order.push(taskId);
+  } else {
+    if (change.what !== 'added' || what === 'deleted') change.what = what; // added, then named: still added
+    if (title) change.title = title;
+  }
+  clearTimeout(heard.timer);
+  heard.timer = setTimeout(sayHeard, 1200);
+}
+
+function sayHeard() {
+  var person = shared.who(heard.list, heard.user), list = findList(heard.list);
+  if (!person || !list) return;
+  var changes = $.map(heard.order, function(id) { return heard.changes[id]; });
+  heard.order = [];
+  heard.changes = {};
+  var name = firstName(person), text;
+  if (changes.length === 1) {
+    var c = changes[0], verb = { added: 'added', ticked: 'ticked', unticked: 'unticked', changed: 'changed', deleted: 'deleted' }[c.what];
+    text = name + ' ' + verb + ' ' + (c.title ? '“' + c.title + '”' : 'a task');
+  } else {
+    text = name + ' changed ' + changes.length + ' tasks in “' + list.title + '”';
+  }
+  if (undoShown || ($('#message').is(':visible') && $('#message button').is(':visible'))) return announce(text + '.'); // not over Undo, Retry or Log in
+  showMessage(text + '.', null, null, 5000);
 }
 
 function autosize(todo) {
@@ -1556,7 +1650,8 @@ function renderMeta(row) {
   var values = current(row.children('.todo'));
   var overdue = values.due && values.due < isoDay(new Date()) && !row.children('input[type=checkbox]').prop('checked');
   var completedAt = !row.hasClass('leaving') && row.children('.todo')[0].completedAt; // not until it's in Completed
-  var when = completedAt ? 'Completed: ' + dayName(isoDay(new Date(completedAt)))
+  var by = completedAt && changer(row.children('.todo'));
+  var when = completedAt ? 'Completed: ' + dayName(isoDay(new Date(completedAt))) + (by ? ', by ' + firstName(by) : '')
     : values.due ? (overdue ? 'Overdue: ' : '') + dayName(values.due) : '';
   row.find('.when').text(when).toggleClass('overdue', !!overdue);
   row.find('.preview').text(values.notes.split('\n')[0]);

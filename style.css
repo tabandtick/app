@@ -593,6 +593,12 @@ body:not(.can-share) .share-only {
   box-sizing: content-box;
 }
 
+/* Who else changed a task in a shared list, in the last day */
+.face.changer {
+  margin: 3px 2px 0 4px;
+  border-width: 1px;
+}
+
 .face.more-people {
   width: 28px;
   height: 28px;

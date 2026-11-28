@@ -221,13 +221,22 @@ check('Sam’s list shows Alex', await sam.js(`$('.card.shared .sharers').attr('
 check('Sam’s menu says Leave, not Delete', await sam.js(`$('.card.shared [data-list-do=delete]').text()`), 'Leave list');
 
 // ---- Changes reach the other person as they're made, without looking
+await alex.js(`hideMessage(); true`);
 await sam.js(`$('.card.shared .todo').filter(function() { return this.value === 'Milk'; }).siblings('input[type=checkbox]').click(); true`);
 await eventually('Sam ticks Milk, and Alex sees it at once', () => seen(alex, 'Shopping'), 'Bread, -Seeded');
+await eventually('and is told who did it', () => alex.js(`$('#message span').text()`), 'Sam ticked “Milk”.');
+await sam.js(`hideMessage(); true`);
 await alex.js(`var t = $('.card.shared .todo').filter(function() { return this.value === 'Bread'; }); t.focus(); t.setCursorPosition(5); true`);
 await alex.key('Enter');
 await alex.type('Butter');
 await alex.js(`document.activeElement.blur(); true`);
 await eventually('Alex adds Butter, and Sam sees it at once', () => seen(sam, 'Shopping'), 'Bread, -Butter, -Seeded');
+await eventually('Sam is told Alex added it', () => sam.js(`$('#message span').text()`), 'Alex added “Butter”.');
+check('and Alex’s face is by it, for a day, but not by Sam’s own', await sam.js(`$('.card.shared .claire li').map(function() { var f = $(this).children('.changer'); return $(this).children('.todo').val() + ':' + (f.length ? f.attr('aria-label').replace(/, .*/, '') : '-'); }).get()`),
+  ['Bread:-', 'Butter:Alex changed this', 'Seeded:-']);
+await shot(sam, 'changer');
+await alex.js(`toggleDone($('.card.shared').first()); true`);
+await eventually('Completed says Sam ticked Milk', () => alex.js(`$('.card.shared').first().find('.done-list li .when').first().text()`), 'Completed: Today, by Sam');
 check('the server has both', stored(), 'Bread, Butter, Milk x, Seeded');
 
 // Sam is typing when Alex's change comes: Sam's typing stays

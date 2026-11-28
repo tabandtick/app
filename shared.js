@@ -31,6 +31,8 @@ var shared = (function() {
     check: check,
     link: link,
     people: people,
+    who: who,
+    me: function() { return me; },
     invite: invite,
     uninvite: uninvite,
     reset: reset,
@@ -159,11 +161,17 @@ var shared = (function() {
     f.waiting.push([done, failed]);
     if (f.waiting.length > 1) return;
     listen(f);
-    fetchTasks(f, function() {
-      $.each(f.waiting.splice(0), function(i, w) { w[0](f); });
-    }, function(status) {
-      $.each(f.waiting.splice(0), function(i, w) { if (w[1]) w[1](status); });
-    });
+    // Its people too, to say who changed what; the list shows without them if need be
+    var left = 2, failure = null;
+    function one() {
+      if (--left) return;
+      $.each(f.waiting.splice(0), function(i, w) {
+        if (failure === null) w[0](f);
+        else if (w[1]) w[1](failure);
+      });
+    }
+    fetchTasks(f, one, function(status) { failure = status; one(); });
+    people(f.list.id, one, one);
   }
 
   function fetchTasks(f, done, failed) {
@@ -206,7 +214,19 @@ var shared = (function() {
     if (!f.tasks || !row || !row.id) return;
     // A change of ours not yet saved here wins; ours are saved in order after theirs
     if ($.grep(f.queue, function(op) { return op.task === row.id; }).length) return;
-    var before = f.tasks[row.id] ? JSON.stringify(f.tasks[row.id]) : '';
+    var was = f.tasks[row.id], before = was ? JSON.stringify(was) : '';
+    // Someone else's: say what they did (see heardChange in tasks.js)
+    if (row.updated_by && row.updated_by !== me && window.heardChange) {
+      var what = !was ? (row.deleted_at ? '' : 'added') : row.deleted_at ? 'deleted' :
+        was.status !== row.status ? (row.status === 'completed' ? 'ticked' : 'unticked') :
+        was.title !== (row.title || '') || (was.notes || '') !== (row.notes || '') || (was.due || '') !== (row.due || '') ? 'changed' : '';
+      if (what) {
+        var listId = f.list.id, user = row.updated_by, taskId = row.id, title = row.title || (was && was.title) || '';
+        var tell = function() { heardChange(listId, user, taskId, what, title); };
+        if (f.people && f.people[user]) tell();
+        else people(listId, tell, function() {}); // someone new to this page
+      }
+    }
     if (row.deleted_at) delete f.tasks[row.id];
     else f.tasks[row.id] = taskOf(row);
     var after = f.tasks[row.id] ? JSON.stringify(f.tasks[row.id]) : '';
@@ -263,8 +283,9 @@ var shared = (function() {
 
   // ---- Answering as Google Tasks would
 
+  // As Google Tasks has a task, and changedBy: who last changed it (Tab & Tick's own)
   function taskOf(row) {
-    var task = { kind: 'tasks#task', id: row.id, title: row.title || '', status: row.status, position: row.position, updated: row.updated };
+    var task = { kind: 'tasks#task', id: row.id, title: row.title || '', status: row.status, position: row.position, updated: row.updated, changedBy: row.updated_by || undefined };
     $.each(['parent', 'notes', 'due', 'completed'], function(i, key) { if (row[key]) task[key] = row[key]; });
     return task;
   }
@@ -363,6 +384,7 @@ var shared = (function() {
         if (to) task.parent = to;
         else delete task.parent;
         task.updated = new Date().toISOString();
+        task.changedBy = me;
         save(f, { task: task.id, update: { parent: task.parent || null, position: task.position } });
         result = $.extend({}, task);
       } else {
@@ -384,6 +406,7 @@ var shared = (function() {
       delete task.completed;
     } else if (!task.completed) task.completed = new Date().toISOString();
     task.updated = new Date().toISOString();
+    task.changedBy = me;
   }
 
   // Moving a task between a shared list and another list: made in the one, then
@@ -537,14 +560,25 @@ var shared = (function() {
     return page + '#list=' + encodeURIComponent(listId.slice(PREFIX.length));
   }
 
-  // Who's in the list: done([{ id, name, email, role, type, photo, pending }]).
+  // Who's in the list: done([{ id, user, name, email, role, type, photo, pending }]).
+  // Kept, to say who changed what: see who().
   function people(listId, done, failed) {
     if (!client()) return later(failed, 401);
-    answer(db.rpc('list_people', { l: listId.slice(PREFIX.length) }), function(rows) {
-      done($.map(rows || [], function(p) {
-        return { id: p.email, name: p.name || '', email: p.email, role: p.role === 'owner' ? 'owner' : 'writer', type: 'user', photo: p.photo || '', pending: !p.joined };
-      }));
+    var f = entry(listId.slice(PREFIX.length));
+    answer(db.rpc('list_people', { l: f.id }), function(rows) {
+      var all = $.map(rows || [], function(p) {
+        return { id: p.email, user: p.user_id || '', name: p.name || '', email: p.email, role: p.role === 'owner' ? 'owner' : 'writer', type: 'user', photo: p.photo || '', pending: !p.joined };
+      });
+      f.people = {};
+      $.each(all, function(i, p) { if (p.user) f.people[p.user] = p; });
+      done(all);
     }, failed);
+  }
+
+  // The person with that user id in a list, if known.
+  function who(listId, user) {
+    var f = isShared(listId) && known[listId.slice(PREFIX.length)];
+    return (f && f.people && f.people[user]) || null;
   }
 
   // Adds their email. They see the list when they next open Tab & Tick with it.
