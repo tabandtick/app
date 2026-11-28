@@ -2079,44 +2079,91 @@ function addSubtask(todo) {
 // Move tasks to another list, under the given task there or at the top. Several go
 // one at a time, the last first, so that they keep their order.
 function moveToList(todos, id, previous) {
-  var from = todos[0].card, to = cardFor(id), several = todos.length > 1;
+  var from = todos[0].card, to = cardFor(id);
   if (id === from[0].list) return;
-  if (todos.toArray().some(function(el) { return subtaskRows($(el)).length; })) {
-    return showMessage((several ? 'One of those tasks has' : 'That task has') + ' subtasks, so it can’t change list.', null, null, 4000);
-  }
-  var unmade = todos.filter(function() { return !this.id; });
+  // A task's subtasks go with it, as in Google Tasks, so they aren't moved on their own too
+  var picked = todos.map(function() { return this.id; }).get();
+  todos = todos.filter(function() { return !this.parentTask || picked.indexOf(this.parentTask) < 0; });
+  var several = todos.length > 1;
+  var kidRows = todos.map(function() { return [subtaskRows($(this)).get()]; }).get(); // each one's, in order
+  var unmade = todos.add($($.map(kidRows, function(r) { return r; })).children('.todo')).filter(function() { return !this.id; });
   if (unmade.length) return showMessage(unmade.val() ? 'Still saving that task. Try again in a moment.' : 'Give that task a title first.', null, null, 4000);
-  function call(source, what, target, after, done, failed) {
-    if (shared.isShared(source) || shared.isShared(target)) return shared.move(source, what, target, after, done, failed);
-    send('POST', 'lists/' + encodeURIComponent(source) + '/tasks/' + encodeURIComponent(what) + '/move?destinationTasklist=' + encodeURIComponent(target) +
-      (after ? '&previous=' + encodeURIComponent(after) : ''), null, done, failed);
+
+  // Moves a task and its subtasks to the other list: done({ id, kids }) with their ids there.
+  // Google moves a task between its own lists; to or from a shared list, it's copied
+  // and then deleted.
+  function call(source, what, kids, target, after, done, failed) {
+    var copying = shared.isShared(source) || shared.isShared(target);
+    var base = 'lists/' + encodeURIComponent(source) + '/tasks/';
+    function moveOne(taskId, parent, prev, ok, bad) {
+      if (copying) return shared.move(source, taskId, target, prev, ok, bad);
+      send('POST', base + encodeURIComponent(taskId) + '/move?destinationTasklist=' + encodeURIComponent(target) +
+        (parent ? '&parent=' + encodeURIComponent(parent) : '') + (prev ? '&previous=' + encodeURIComponent(prev) : ''), null, ok, bad);
+    }
+    function moveKids(top, i, prev, made) { // between Google lists: each under its parent there
+      if (i >= kids.length) return done({ id: top, kids: made });
+      moveOne(kids[i], top, prev, function(result) {
+        var kid = (result && result.id) || kids[i];
+        moveKids(top, i + 1, kid, made.concat(kid));
+      }, function(status) {
+        if (status === 404) return moveKids(top, i + 1, kids[i], made.concat(kids[i])); // Google took it with its parent
+        failed(status);
+      });
+    }
+    function copyKids(top, bodies, i, prev, made) { // made under the copy, then deleted here
+      if (i >= bodies.length) {
+        $.each(kids, function(j, kid) { send('DELETE', base + encodeURIComponent(kid), null); }); // gone already with their parent, usually
+        return done({ id: top, kids: made });
+      }
+      send('POST', 'lists/' + encodeURIComponent(target) + '/tasks?parent=' + encodeURIComponent(top) + (prev ? '&previous=' + encodeURIComponent(prev) : ''), bodies[i], function(result) {
+        copyKids(top, bodies, i + 1, result.id, made.concat(result.id));
+      }, failed);
+    }
+    if (!kids.length || !copying) {
+      return moveOne(what, null, after, function(result) { moveKids((result && result.id) || what, 0, null, []); }, failed);
+    }
+    // Read the subtasks first: deleting their parent from this list deletes them too
+    var bodies = [];
+    (function read(i) {
+      if (i >= kids.length) return moveOne(what, null, after, function(result) { copyKids(result.id, bodies, 0, null, []); }, failed);
+      send('GET', base + encodeURIComponent(kids[i]), null, function(task) {
+        var body = { title: task.title || '', notes: task.notes || null, due: task.due || null, status: task.status };
+        if (task.status === 'completed' && task.completed) body.completed = task.completed;
+        bodies.push(body);
+        read(i + 1);
+      }, failed);
+    })(0);
   }
+
   settle('Move anyway', function() {
-    var rows = todos.parent(), after = rows.last().next();
+    var families = todos.map(function(i) { return [[this.parentNode].concat(kidRows[i])]; }).get(); // each row, then its subtasks'
+    var rows = $($.map(families, function(f) { return f; })), after = rows.last().next();
     var was = siblingAbove(todos.first(), function(el) { return el.id && !$(el).hasClass('checked'); });
     var list = findList(id), name = (list || {}).title, moved = [];
     function count(by) {
       if (list && !to.length && typeof list.count === 'number') list.count += by;
     }
-    todos.each(function() { this.deleted = true; }); // on their way
+    rows.children('.todo').each(function() { this.deleted = true; }); // on their way
     rows.removeClass('selected').detach();
     refreshRows();
     function step(i) {
       if (i < 0) return arrived();
-      var el = todos[i];
-      call(from[0].list, el.id, id, previous, function(result) {
+      var el = todos[i], kids = $(kidRows[i]).children('.todo');
+      call(from[0].list, el.id, kids.map(function() { return this.id; }).get(), id, previous, function(result) {
         el.gone = true;
-        moved.unshift((result && result.id) || el.id);
+        kids.each(function() { this.gone = true; });
+        moved.unshift(result);
         count(1);
         step(i - 1);
       }, function(status) {
-        var left = todos.slice(0, i + 1); // not moved
-        left.each(function() { this.deleted = false; });
-        if (after.length && $.contains(document, after[0])) after.before(left.parent());
-        else from.find('.claire').append(left.parent());
+        var left = $($.map(families.slice(0, i + 1), function(f) { return f; })); // not moved
+        left.children('.todo').each(function() { this.deleted = false; });
+        if (after.length && $.contains(document, after[0])) after.before(left);
+        else from.find('.claire').append(left);
         refreshRows();
         if (list) showCount(list);
-        if (moved.length && to.length) reload(to);
+        if (to.length) reload(to);
+        reload(from);
         showFailure('Could not move ' + (several ? 'those tasks.' : 'that task.'), status);
       });
     }
@@ -2132,7 +2179,7 @@ function moveToList(todos, id, previous) {
             if (to.length) reload(to);
             return reload(from);
           }
-          call(id, moved[i], from[0].list, was && was.id, function() {
+          call(id, moved[i].id, moved[i].kids, from[0].list, was && was.id, function() {
             count(-1);
             stepBack(i - 1);
           }, function(status) {
