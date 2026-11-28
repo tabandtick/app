@@ -1057,7 +1057,7 @@ check('logging out of the last shows Log in', [await js(`$('#authorize-div').is(
 // extensions. A fake of both: Chrome's is main@, and Google's page answers with the
 // account asked for, or when choosing, the one the test says; prompt=none fails if told to.
 const fakeChrome = await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `
-  window.flows = []; window.chooseNext = ''; window.googleSession = true; window.chromeCalls = [];
+  window.flows = []; window.chooseNext = ''; window.googleSession = true; window.chromeCalls = []; window.idFlows = [];
   window.chrome = { runtime: {}, identity: {
     getAuthToken: function(options, done) {
       chromeCalls.push((options.interactive ? 'ask ' : 'silent ') + options.scopes.length);
@@ -1068,6 +1068,10 @@ const fakeChrome = await cdp('Page.addScriptToEvaluateOnNewDocument', { source: 
     getRedirectURL: function() { return 'https://fake.chromiumapp.org/'; },
     launchWebAuthFlow: function(options, done) {
       var q = new URLSearchParams(options.url.split('?')[1]);
+      if (q.get('response_type') === 'id_token') { // for a session with Tab & Tick's server
+        idFlows.push({ how: (q.get('prompt') || 'ask') + ' ' + q.get('login_hint'), scope: q.get('scope'), nonce: q.get('nonce'), client: q.get('client_id') });
+        return setTimeout(function() { done('https://fake.chromiumapp.org/#id_token=id-' + q.get('login_hint')); }, 5);
+      }
       flows.push((q.get('prompt') || 'ask') + ' ' + (q.get('login_hint') || '-'));
       if (q.get('prompt') === 'none' && !googleSession) return setTimeout(function() { done('https://fake.chromiumapp.org/#error=interaction_required'); }, 5);
       var who = q.get('prompt') === 'select_account' ? chooseNext : q.get('login_hint');
@@ -1083,6 +1087,13 @@ await js(`var realFetch = window.fetch;
     var who = options.headers.Authorization.replace('Bearer token-', '').replace('+drive', '');
     return Promise.resolve(new Response(JSON.stringify({ email: who, name: who.split('@')[0] })));
   };
+  window.idTokens = [];
+  cloud.withIdToken = function(email, idToken, raw, done) {
+    crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw)).then(function(hash) {
+      idTokens.push({ email: email, idToken: idToken, hashed: Array.prototype.map.call(new Uint8Array(hash), function(b) { return ('0' + b.toString(16)).slice(-2); }).join('') });
+      done(false);
+    });
+  };
   window.send = function(method, path, body, done) {
     var who = (auth.token() || '').replace('token-', '').replace('+drive', ''), name = who.split('@')[0];
     var result = path.indexOf('users/@me/lists') === 0 ? { items: [{ id: name + '-list', title: name + '’s list' }], id: name + '-list' } : { items: [] };
@@ -1093,6 +1104,8 @@ await wait(500);
 const ext = () => js(`({ lists: $('#lists .name').map(function() { return this.textContent; }).get().join(), me: $('#account-email').text(), others: $('#other-accounts .other-account').map(function() { return $(this).attr('data-email'); }).get() })`);
 check('the extension signs in with Chrome’s account, without asking', [await ext(), await js('chromeCalls.every(function(c) { return c.indexOf("silent") === 0; })')], [{ lists: 'main’s list', me: 'main@example.com', others: [] }, true]);
 check('and offers to add another, and to share', await js(`[$('body').hasClass('can-switch'), $('body').hasClass('can-share')]`), [true, true]);
+check('it asks Google, quietly, who it is, for a session with Tab & Tick’s server', await js(`idFlows.map(function(f) { return [f.how, f.scope, f.client === CLIENT_ID]; })`), [['none main@example.com', 'openid email profile', true]]);
+check('and hands that to the server, with the nonce Google was given', await js(`idTokens.map(function(t) { return [t.email, t.idToken, t.hashed === idFlows[0].nonce]; })`), [['main@example.com', 'id-main@example.com', true]]);
 await js(`chooseNext = 'work@example.com'; $('#add-account').click(); true`);
 await wait(500);
 check('adding one goes through Google’s page, choosing the account', [await ext(), await js('flows')], [{ lists: 'work’s list', me: 'work@example.com', others: ['main@example.com'] }, ['select_account -']]);

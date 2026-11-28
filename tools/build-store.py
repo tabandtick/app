@@ -14,7 +14,7 @@ from pathlib import Path
 CLIENT_ID = '719894949389-d5vjqvhj7iv0du78j9ml0cf8s783niso.apps.googleusercontent.com'
 
 ROOT = Path(__file__).resolve().parent.parent
-FILES = ['index.html', 'style.css', 'jquery.js', 'script.js', 'tasks.js', 'cloudlists.js', 'shared.js',
+FILES = ['index.html', 'style.css', 'jquery.js', 'script.js', 'tasks.js', 'cloudlists.js', 'shared.js', 'supabase.js', 'cloud.js',
          'icons/logo.svg', 'icons/LICENSE-material-symbols.txt', 'icons/icon-16.png', 'icons/icon-32.png', 'icons/icon-48.png', 'icons/icon-128.png',
          'app.webmanifest', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png']
 
@@ -42,11 +42,9 @@ def extension_shared():
 
 
 def extension_page():
-    # Chrome keeps the extension signed in, so it needs no Tab & Tick Cloud
-    text = (ROOT / 'index.html').read_text()
-    text = re.sub(r"    <!-- Keeps the website signed in.*?-->\n    <script src=\"supabase.js\"></script>\n    <script src=\"cloud.js\"></script>\n", '', text, flags=re.S)
-    assert 'supabase.js' not in text and 'cloud.js' not in text
-    return text
+    # The same page: Tab & Tick's server (supabase.js, cloud.js) keeps shared lists in
+    # the extension too, though Chrome keeps it signed in
+    return (ROOT / 'index.html').read_text()
 
 
 def main():
