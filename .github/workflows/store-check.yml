@@ -1,0 +1,104 @@
+# Every hour, asks the Chrome Web Store how Tab & Tick's review is going, and emails
+# when a new version goes live or isn't approved. It creates nothing in GitHub.
+#
+# Needs, besides the CWS_ secrets publish.yml uses:
+#   RESEND_API_KEY  from resend.com (free); on its free plan it can email the address
+#                   the Resend account was made with, from onboarding@resend.dev
+#   NOTIFY_EMAIL    that address
+# Without them it only writes what it found in the run's log.
+#
+# Run it by hand (Actions > this workflow > Run workflow) to get an email with the
+# current state, to check it works.
+
+name: Store review check
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write # to keep what it saw last time, in the Actions cache
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  ITEM_ID: amidicalcieolbecimlogomhnokopigp
+  API: https://chromewebstore.googleapis.com
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: What it saw last time
+        uses: actions/cache/restore@v4
+        with:
+          path: last-seen.txt
+          key: store-last-seen-${{ github.run_id }}
+          restore-keys: store-last-seen-
+
+      - name: Ask the store, and email if anything changed
+        env:
+          CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+          BY_HAND: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          email() {
+            echo "Email: $1 / $2"
+            if [ -z "$RESEND_API_KEY" ] || [ -z "$NOTIFY_EMAIL" ]; then
+              echo "::warning::RESEND_API_KEY or NOTIFY_EMAIL isn't set, so nothing was emailed"
+              return
+            fi
+            jq -n --arg to "$NOTIFY_EMAIL" --arg subject "$1" --arg text "$2" \
+              '{from: "Tab & Tick <onboarding@resend.dev>", to: [$to], subject: $subject, text: $text}' |
+              curl -sS -X POST https://api.resend.com/emails -H "Authorization: Bearer $RESEND_API_KEY" \
+                -H 'Content-Type: application/json' -d @- || echo "::warning::The email couldn't be sent"
+            echo
+          }
+          dashboard="https://chrome.google.com/webstore/devconsole/$PUBLISHER_ID/$ITEM_ID/edit/status"
+          last=$(cat last-seen.txt 2>/dev/null || true)
+
+          token=$(curl -sS https://oauth2.googleapis.com/token \
+            --data-urlencode "client_id=$CLIENT_ID" --data-urlencode "client_secret=$CLIENT_SECRET" \
+            --data-urlencode "refresh_token=$REFRESH_TOKEN" --data-urlencode grant_type=refresh_token | jq -r '.access_token // empty')
+          if [ -z "$token" ]; then
+            now="signed-out"
+            [ "$last" != "$now" ] && email "Tab & Tick store check can't sign in" "The hourly check couldn't sign in to the Chrome Web Store. The CWS_ secrets may need a new refresh token."
+            echo "$now" > last-seen.txt
+            exit 0
+          fi
+          echo "::add-mask::$token"
+          status=$(curl -sS -H "Authorization: Bearer $token" "$API/v2/publishers/$PUBLISHER_ID/items/$ITEM_ID:fetchStatus") || exit 0
+          live=$(echo "$status" | jq -r '.publishedItemRevisionStatus.distributionChannels[0].crxVersion // empty')
+          submitted=$(echo "$status" | jq -r '.submittedItemRevisionStatus.distributionChannels[0].crxVersion // empty')
+          state=$(echo "$status" | jq -r '.submittedItemRevisionStatus.state // empty')
+          now="live=$live submitted=$submitted state=$state"
+          echo "Last time: ${last:-nothing}"
+          echo "Now: $now"
+
+          if [ "$BY_HAND" = true ]; then
+            email "Tab & Tick on the Chrome Web Store: $live live" "Live: $live${submitted:+. In review: $submitted ($state)}. $dashboard"
+          elif [ -n "$last" ] && [ "$last" != "$now" ] && [ "$last" != signed-out ]; then
+            was_live=$(echo "$last" | sed -n 's/^live=\([^ ]*\).*/\1/p')
+            if [ -n "$live" ] && [ "$live" != "$was_live" ]; then
+              email "Tab & Tick $live is live" "The Chrome Web Store approved Tab & Tick $live, and it's on its way to people's Chrome. $dashboard"
+            fi
+            case "$state" in
+              ''|PENDING_REVIEW|STAGED|PUBLISHED) ;;
+              *) email "Tab & Tick $submitted wasn't approved" "The Chrome Web Store says $state for $submitted. The reason is in the developer dashboard: $dashboard" ;;
+            esac
+          fi
+          echo "$now" > last-seen.txt
+
+      - name: Keep what it saw
+        uses: actions/cache/save@v4
+        with:
+          path: last-seen.txt
+          key: store-last-seen-${{ github.run_id }}
