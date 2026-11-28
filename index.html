@@ -51,6 +51,9 @@
       </div>
     </header>
 
+    <!-- On a phone, as in Google's Tasks app: a tab for each list, one list at a time -->
+    <nav id="list-tabs" role="tablist" aria-label="Lists"></nav>
+
     <nav id="side" aria-label="Lists">
       <button type="button" id="create"><svg class="icon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Create task</button>
       <h2><button type="button" id="lists-toggle" aria-expanded="true" aria-controls="lists">Lists<svg class="chevron" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M5.500 12.500L10 8l4.500 4.500" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button></h2>
@@ -153,6 +156,8 @@
       <div class="buttons"><button type="button" class="close">Close</button></div>
     </dialog>
 
+    <!-- On a phone: add a task to the list shown -->
+    <button type="button" id="fab" aria-label="Add a task"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
     <div id="drop-line"></div>
     <div id="message" role="status"><span></span> <button type="button"></button></div>
     <!-- On touch screens, what to do with the picked tasks -->

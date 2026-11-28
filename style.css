@@ -1699,3 +1699,200 @@ dialog input:focus {
     padding-left: 48px;
   }
 }
+
+/* ---- On a phone, as in Google's Tasks app: the title in the middle, a tab for each
+   list (one list at a time), a round button to add a task, and quieter rows. Tabs and
+   the button are only shown here. */
+#list-tabs,
+#fab {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .signed-in #side-toggle,
+  .signed-in #side,
+  .signed-in .new-task {
+    display: none !important;
+  }
+
+  /* Logo and name in the middle; search as an icon on the left that opens out */
+  .signed-in #header {
+    position: relative;
+    justify-content: center;
+  }
+
+  .signed-in #header img {
+    width: 32px;
+    height: 32px;
+  }
+
+  .signed-in #header h1 {
+    display: block;
+    font-size: 20px;
+  }
+
+  .signed-in #search {
+    position: absolute;
+    top: calc(var(--top) + 12px);
+    left: 8px;
+    z-index: 2;
+    width: 40px;
+    height: 40px;
+    margin: 0;
+    padding: 0 10px;
+    background: none;
+    transition: width 0.2s ease;
+  }
+
+  .signed-in #search input {
+    width: 0;
+    opacity: 0;
+  }
+
+  .signed-in #search .icon {
+    flex: none;
+    width: 20px;
+    height: 20px;
+  }
+
+  .signed-in #search:focus-within {
+    width: calc(100% - 16px);
+    background: var(--raised);
+  }
+
+  .signed-in #search:focus-within input {
+    width: auto;
+    opacity: 1;
+  }
+
+  .signed-in #account {
+    position: absolute;
+    top: calc(var(--top) + 16px);
+    right: 12px;
+  }
+
+  /* The tabs */
+  .signed-in #list-tabs {
+    display: flex;
+    gap: 4px;
+    margin: 0 0 8px;
+    padding: 0 8px;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--line);
+    scrollbar-width: none;
+  }
+
+  #list-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  #list-tabs .tab {
+    display: flex;
+    position: relative;
+    flex: none;
+    align-items: center;
+    gap: 6px;
+    height: 48px;
+    padding: 0 14px;
+    border-radius: 0;
+    background: none;
+    color: var(--muted);
+    font-size: 16px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  #list-tabs .tab.on {
+    color: var(--accent);
+  }
+
+  #list-tabs .tab.on::after {
+    position: absolute;
+    right: 14px;
+    bottom: 0;
+    left: 14px;
+    height: 3px;
+    border-radius: 3px 3px 0 0;
+    background: var(--accent);
+    content: '';
+  }
+
+  #list-tabs .tab .shared-icon {
+    color: inherit;
+  }
+
+  /* One list at a time */
+  .signed-in #cards .card:not(.current) {
+    display: none;
+  }
+
+  .signed-in #cards .card {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  /* Rows: no drag handle, and the menu only on the task being edited */
+  ul.list li > .handle {
+    display: none;
+  }
+
+  ul.list li:not(.selected) > .more {
+    visibility: hidden;
+  }
+
+  ul.list li {
+    padding-left: 12px;
+  }
+
+  ul.list li.subtask {
+    padding-left: 40px;
+  }
+
+  /* The date and notes line under the title's text */
+  ul.list li > .meta,
+  ul.list li > .details {
+    padding-left: 33px;
+  }
+
+  /* Due dates in the accent colour, as in Google's app */
+  .claire .when:not(.overdue):not(:empty) {
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  .claire .when:not(:empty)::before {
+    display: inline-block;
+    width: 15px;
+    height: 15px;
+    margin-right: 6px;
+    vertical-align: -2px;
+    background: currentColor;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round'%3E%3Ccircle cx='8' cy='8' r='6.2'/%3E%3Cpath d='M8 4.8V8l2.2 1.4'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round'%3E%3Ccircle cx='8' cy='8' r='6.2'/%3E%3Cpath d='M8 4.8V8l2.2 1.4'/%3E%3C/svg%3E") center / contain no-repeat;
+    content: '';
+  }
+
+  /* Room under the last task for the button */
+  .signed-in #cards {
+    padding-bottom: 88px;
+  }
+
+  .signed-in #fab {
+    display: grid;
+    position: fixed;
+    right: 16px;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    z-index: 4;
+    place-items: center;
+    width: 56px;
+    height: 56px;
+    border-radius: 16px;
+    background: var(--tint);
+    color: var(--on-tint);
+    box-shadow: 0 3px 8px var(--shadow);
+  }
+
+  .touch-picking #fab {
+    display: none;
+  }
+}

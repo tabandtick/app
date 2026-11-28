@@ -79,11 +79,20 @@ function check(label, got, want) {
   console.log((ok ? 'PASS ' : 'FAIL ') + label + (ok ? '' : '\n   got  ' + JSON.stringify(got) + '\n   want ' + JSON.stringify(want)));
 }
 
+// Until the page's own code has loaded: a fixed wait can be too short on a slow machine
+async function loaded() {
+  await wait(300);
+  for (let i = 0; i < 150; i++) {
+    try { if (await js(`document.readyState === 'complete' && typeof newCard === 'function' && typeof checkAuth === 'function'`)) return wait(300); } catch {}
+    await wait(200);
+  }
+}
+
 await cdp('Page.enable');
 await cdp('Runtime.enable'); // to hear of errors in the page
 await cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
 await cdp('Page.navigate', { url: base + 'index.html' });
-await wait(1500);
+await loaded();
 await js(`
   tickPause = closeTime = openTime = reopenDelay = 0; // the pause and slides on ticking: timed in their own test
   window.sent = [];
@@ -828,6 +837,11 @@ await touch('touchEnd'); await wait(200);
 check('dragging by the handle with a finger moves the task', (await s()).order, before.join(' '));
 await cdp('Emulation.setTouchEmulationEnabled', { enabled: false });
 
+// ---- The line under a task with a date or notes is shown as the list loads
+await reset([{ id: 'm1', title: 'Dated', position: '1', due: dayIso(1) }, { id: 'm2', title: 'Noted', position: '2', notes: 'Some notes' }, { id: 'm3', title: 'Plain', position: '3' }]);
+check('a task’s date or notes show under it when the list loads', await js(`$('.claire li').map(function() { var m = $(this).children('.meta'); return $(this).children('.todo').val() + ':' + (m.is(':visible') ? m.text() : 'hidden'); }).get()`),
+  ['Dated:Tomorrow', 'Noted:Some notes', 'Plain:hidden']);
+
 // ---- Dates typed at the end of a title, read as you leave it
 check('dates at the end of a title are read, from Thursday 26 November 2026', await js(`(function() {
   var now = new Date(2026, 10, 26, 15, 0);
@@ -903,7 +917,7 @@ await js(`window.refuse = false; hideMessage(); tickPause = closeTime = openTime
 await js(`localStorage.setItem('tabandtick-token', JSON.stringify({ token: 'old', until: Date.now() + 60000 }));
   localStorage.setItem('tabandtick-logged-out', '1'); true`);
 await cdp('Page.navigate', { url: base + 'index.html' });
-await wait(1500);
+await loaded();
 await js(`window.calls = [];
   window.google = { accounts: { oauth2: {
     hasGrantedAllScopes: function() { return true; },
@@ -978,7 +992,7 @@ check('cloud.js: signs in with the code, keeps a session, renews, and signs out'
 // cloud keeps each one's session.
 await js(`localStorage.setItem('tabandtick-logged-out', '1'); localStorage.removeItem('tabandtick-token'); localStorage.removeItem('tabandtick-tokens'); true`);
 await cdp('Page.navigate', { url: base + 'index.html' });
-await wait(1500);
+await loaded();
 await js(`window.windows = 0; window.choose = ''; window.sessions = {}; window.renewals = 0;
   window.google = { accounts: { oauth2: {
     hasGrantedAllScopes: function() { return true; },

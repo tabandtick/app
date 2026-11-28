@@ -260,6 +260,36 @@ function showLists() {
     card.find('.done-list').attr('aria-label', 'Completed in ' + list.title);
     if (made) loadCard(card);
   });
+  showTabs();
+  refreshRows();
+}
+
+// ---- On a phone: a tab for each list shown, and only the chosen list's card, as in
+// Google's Tasks app. The tabs are always made; the stylesheet shows them on phones.
+
+function chosenTab(id) {
+  try {
+    if (id) localStorage.setItem('tabandtick-tab', id);
+    return localStorage.getItem('tabandtick-tab');
+  } catch (e) { return id || null; }
+}
+
+function showTabs() {
+  var cards = $('#cards .card'), want = chosenTab();
+  if (!cards.filter(function() { return this.list === want; }).length) want = cards.length ? cards[0].list : null;
+  cards.each(function() { $(this).toggleClass('current', this.list === want); });
+  $('#list-tabs').empty().append(cards.map(function() {
+    var list = findList(this.list) || {}, on = this.list === want;
+    return $('<button type="button" role="tab" class="tab"></button>').attr({ 'data-list': this.list, 'aria-selected': String(on) })
+      .toggleClass('on', on).append($('<span class="label"></span>').text(list.title || ''), list.shared ? $(PEOPLE).attr('aria-hidden', 'true') : null)[0];
+  }).get(), $('<button type="button" class="tab new-list-tab"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>New list</button>'));
+  var on = $('#list-tabs .tab.on')[0];
+  if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+function chooseTab(id) {
+  chosenTab(id);
+  showTabs();
   refreshRows();
 }
 
@@ -340,6 +370,7 @@ function showList(id, show) {
 function createList(title) {
   send('POST', 'users/@me/lists', { title: title }, function(list) {
     lists.push(list);
+    chosenTab(list.id); // its tab, on a phone
     showLists();
     newTask(cardFor(list.id));
   }, function(status) {
@@ -427,6 +458,7 @@ function askSharedList() {
 function addShared(list) {
   if (!findList(list.id)) lists.push(list);
   hiddenLists($.grep(hiddenLists(), function(other) { return other !== list.id; }));
+  chosenTab(list.id); // its tab, on a phone
   showLists();
 }
 
@@ -1510,7 +1542,8 @@ function renderMeta(row) {
     : values.due ? (overdue ? 'Overdue: ' : '') + dayName(values.due) : '';
   row.find('.when').text(when).toggleClass('overdue', !!overdue);
   row.find('.preview').text(values.notes.split('\n')[0]);
-  row.children('.meta').toggle(!!(when || values.notes));
+  // Set outright: jQuery 3's toggle() can't show what the stylesheet hides in a row not yet on the page
+  row.children('.meta').css('display', when || values.notes ? 'block' : 'none');
   var other = values.due && values.due !== dayFrom(0) && values.due !== dayFrom(1);
   row.find('[data-due]').each(function() { $(this).toggleClass('on', values.due === dayFrom(+$(this).attr('data-due'))); });
   row.find('.pick-date').toggleClass('on', !!other).toggleClass('overdue', !!(other && overdue)).find('.pick-label').text(other ? dayName(values.due) : '');
