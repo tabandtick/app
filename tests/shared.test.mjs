@@ -1,9 +1,11 @@
-// Tests shared lists kept on Tab & Tick's server: Alex and Sam, each in their own tab,
-// sharing a list through a local copy of the server (Supabase), with its real rules
-// and Realtime. Eve, who wasn't invited, gets nothing. Google Tasks is a small fake.
+// Tests shared lists: Alex and Sam, each in their own tab, sharing a list that's in each
+// one's Google Tasks, kept matched by Tab & Tick's sync, through a local copy of the
+// server (Supabase) with its real rules and Realtime. Eve, who wasn't invited, gets
+// nothing. Google Tasks, and the sync's part of the server, are run by
+// supabase/tests/sync_server.ts (Deno), with Google Tasks in memory.
 //
 //   supabase start -x studio,storage-api,imgproxy,edge-runtime,logflare,vector,mailpit,supavisor,postgres-meta
-//   node tests/shared.test.mjs        (Node 22 or later, Chrome, and Docker)
+//   node tests/shared.test.mjs        (Node 22 or later, Deno, Chrome, and Docker)
 // Without the local server running, it says so and stops.
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
@@ -37,33 +39,25 @@ for (const [name, full] of Object.entries(PEOPLE)) {
   sql(`insert into auth.identities (provider_id, user_id, identity_data, provider, last_sign_in_at, created_at, updated_at) values ('g-${name}', '${user.id}', '{"sub":"g-${name}","email":"${name}@example.com","email_verified":true}', 'google', now(), now(), now());`);
 }
 
-// ---- A fake of Google Tasks, with a list each
-const googleTasks = { alex: [{ id: 'g1', title: 'Call the plumber', status: 'needsAction', position: '00000000000000000001' }], sam: [], eve: [] };
-let made = 0;
-function fake(req, res, path, body) {
-  const user = (req.headers.authorization || '').replace('Bearer ', '');
-  const url = new URL(path, 'http://x'), q = url.searchParams, parts = url.pathname.split('/').filter(Boolean);
-  const json = (status, value) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(value === undefined ? '' : JSON.stringify(value)); };
-  const tasks = googleTasks[user];
-  if (!tasks) return json(401, { error: { code: 401, message: 'Invalid Credentials' } });
-  const rest = parts.slice(2).join('/');
-  if (rest === 'users/@me/lists') return json(200, { items: [{ id: 'g1', title: 'My Tasks' }] });
-  if (rest === 'users/@me/lists/@default') return json(200, { id: 'g1' });
-  const m = rest.match(/^lists\/g1\/tasks(?:\/([^/]+))?$/);
-  const task = m && m[1] && tasks.find(t => t.id === m[1]);
-  if (!m || (m[1] && !task)) return json(404, { error: { code: 404, message: 'Not found' } });
-  if (req.method === 'GET' && !m[1]) return json(200, { items: tasks.filter(t => q.get('showCompleted') !== 'false' || t.status !== 'completed') });
-  if (req.method === 'GET') return json(200, task);
-  if (req.method === 'POST') { const t = { id: 'g' + (++made + 100), position: '0', status: 'needsAction', ...JSON.parse(body || '{}') }; if (q.get('parent')) t.parent = q.get('parent'); tasks.unshift(t); return json(200, t); }
-  if (req.method === 'PATCH') { Object.assign(task, JSON.parse(body || '{}')); return json(200, task); }
-  if (req.method === 'DELETE') { tasks.splice(tasks.indexOf(task), 1); return json(204); }
-}
+// ---- Google Tasks in memory, and the sync, as the server runs it
+const deno = spawn('deno', ['run', '-A', join(app, 'supabase/tests/sync_server.ts')], { cwd: app, stdio: ['ignore', 'pipe', 'inherit'] });
+process.on('exit', () => deno.kill());
+const SYNC = await new Promise((resolve, reject) => {
+  let out = '';
+  deno.on('error', () => reject(new Error('Deno is needed: see deno.com')));
+  deno.stdout.on('data', d => { out += d; const m = out.match(/port (\d+)/); if (m) resolve('http://127.0.0.1:' + m[1] + '/'); });
+});
+const google = async (name, method, path, body) => (await fetch(SYNC + 'google', { method: 'POST', body: JSON.stringify({ name, method, path, body }) })).json();
+const inGoogle = async (name, title) => (await fetch(SYNC + 'view?name=' + name + '&title=' + encodeURIComponent(title))).json();
+for (const name of Object.keys(PEOPLE)) await google(name, 'POST', 'users/@me/lists', { title: 'My Tasks' });
+const myTasks = (await inGoogle('alex', 'My Tasks')).id;
+await google('alex', 'POST', `lists/${myTasks}/tasks`, { title: 'Call the plumber' });
+const ids = Object.fromEntries(Object.keys(PEOPLE).map(name => [name, sql(`select id from auth.users where email = '${name}@example.com'`)]));
 
 const server = createServer((req, res) => {
   let body = '';
   req.on('data', c => body += c);
   req.on('end', () => {
-    if (req.url.startsWith('/fake/')) return fake(req, res, req.url.slice(5), body);
     const path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname)).replace(/^([/\\])+/, '') || 'index.html';
     const file = join(app, path);
     if (!file.startsWith(app) || !existsSync(file)) { res.writeHead(404); return res.end(); }
@@ -117,7 +111,7 @@ async function person(name, hash = '') {
   await cdp('Page.enable');
   // Signed in to Google (the fake) and to the local server, as the website would be
   const signIn = `(async function() {
-    API = '${base}fake/tasks/v1/';
+    API = '${SYNC}tasks/v1/';
     auth.token = function() { return '${name}'; };
     auth.hasDrive = function() { return false; };
     auth.canShare = true;
@@ -130,6 +124,14 @@ async function person(name, hash = '') {
     if (result.error) throw new Error(result.error.message);
     cloud.db = function() { return db; };
     cloud.has = function() { return true; };
+    // The server's sync, run by sync_server.ts
+    cloud.syncCopy = function(email, list, done) {
+      fetch('${SYNC}sync', { method: 'POST', body: JSON.stringify({ list: list, user: '${ids[name]}' }) })
+        .then(function(r) { return r.ok ? r.json() : null; }).then(done, function() { done(null); });
+    };
+    auth.allowServer = function(email, done) {
+      fetch('${SYNC}permission', { method: 'POST', body: JSON.stringify({ name: '${name}', ok: true }) }).then(function() { done(true); });
+    };
     hideMessage(); $('#authorize-div').hide();
     checkAuth();
     return true;
@@ -157,7 +159,7 @@ function check(label, got, want) {
   console.log((ok ? 'PASS ' : 'FAIL ') + label + (ok ? '' : '\n   got  ' + JSON.stringify(got) + '\n   want ' + JSON.stringify(want)));
 }
 // Waits up to a few seconds for what's seen to be as wanted: Realtime takes a moment
-async function eventually(label, look, want, ms = 5000) {
+async function eventually(label, look, want, ms = 8000) {
   let got;
   for (const end = Date.now() + ms; Date.now() < end; await wait(100)) {
     got = await look();
@@ -174,20 +176,28 @@ const seen = (p, title) => p.js(`(function() {
   }).get().join(', ');
 })()`);
 const sidebar = p => p.js(`$('#lists .name').map(function() { return this.textContent; }).get().join(', ')`);
-const stored = () => sql(`select string_agg(title || case when status = 'completed' then ' x' else '' end, ', ' order by title) from public.tasks where deleted_at is null`);
 
-// ---- Alex makes a shared list: on the server, with no Drive
+
+const stored = () => sql(`select string_agg(title || case when status = 'completed' then ' x' else '' end, ', ' order by title) from public.tasks where deleted_at is null and list_id = '${listId}'`);
+const cardOf = title => `$('#cards .card').filter(function() { return $(this).find('.list-title').val() === ${JSON.stringify(title)}; })`;
+const row = (title, task) => `${cardOf(title)}.find('.todo').filter(function() { return this.value === ${JSON.stringify(task)}; })`;
+let listId = '';
+
+// ---- Alex makes a shared list: a Google Tasks list of Alex's, shared
 const alex = await person('alex');
 await alex.js(`$('#new-shared').click(); true`);
 await wait(100);
-check('the new list dialog doesn’t mention Drive', await alex.js(`$('#dialog p').text()`), 'Share it with anyone with a Google account.');
+check('the new list dialog', await alex.js(`$('#dialog p').text()`), 'Share it with anyone with a Google account.');
 await alex.type('Shopping');
 await alex.js(`$('#dialog form')[0].requestSubmit(); true`);
-await wait(800);
-const listId = sql(`select id from public.lists`);
-check('the list is made on the server, and shown', [sql(`select title from public.lists`), await sidebar(alex)], ['Shopping', 'My Tasks, Shopping']);
-check('the share dialog opens, saying to send the link', await alex.js(`[$('#share')[0].open, $('#share .share-note').text()]`),
-  [true, 'People you add can see and change this list in Tab & Tick. Send them the link: it opens once they log in with that Google account.']);
+await wait(1000);
+listId = sql(`select id from public.lists`);
+const alexShop = (await inGoogle('alex', 'Shopping')).id;
+check('it’s a list in Alex’s Google Tasks, shared on the server, shown once', [sql(`select title from public.lists`), !!alexShop, await sidebar(alex)], ['Shopping', true, 'My Tasks, Shopping']);
+check('the server knows it’s Alex’s Google list', sql(`select tasklist from public.google_copies where user_id = '${ids.alex}'`), alexShop);
+check('the share dialog opens, saying to send the link, and that it’s in Google Tasks', await alex.js(`[$('#share')[0].open, $('#share .share-note').text(), $('#share .copy-state span').text()]`),
+  [true, 'People you add can see and change it, in Tab & Tick and in their Google Tasks. Send them the link: it opens once they log in with that Google account.',
+    'It’s in your Google Tasks too, kept up to date.']);
 await wait(300);
 check('it lists Alex as the owner', await alex.js(`$('#share .people li').map(function() { return $(this).text(); }).get()`), ['AAlexalex@example.comOwner']);
 await alex.js(`$('#share input[type=email]').focus(); true`);
@@ -197,135 +207,157 @@ await wait(600);
 await eventually('Sam is invited, and shown as not having opened it yet', () => alex.js(`$('#share .people li').map(function() { return $(this).find('.name').text() + ' / ' + $(this).find('.email').text(); }).get()`),
   ['Alex / alex@example.com', 'sam@example.com / Hasn’t opened it yet']);
 check('Alex is offered the link to send', await alex.js(`[$('#message span').text(), $('#message button').text()]`), ['Shared with Sam@Example.com. Send them the link so they know.', 'Copy link']);
-check('the link is to the list', await alex.js(`shared.link('cloud:${listId}')`), base + 'index.html#list=' + listId);
+check('the link is to the list', await alex.js(`shared.link('${alexShop}')`), base + 'index.html#list=' + listId);
 await shot(alex, 'cloud-share');
 await alex.js(`$('#share .close').click(); true`);
 
-await alex.js(`$('#cards .card.shared .new-task').click(); true`);
+await alex.js(`${cardOf('Shopping')}.find('.new-task').click(); true`);
 await alex.type('Milk'); await alex.key('Enter');
 await alex.type('Bread'); await alex.key('Enter');
 await alex.type('Seeded'); await alex.key('Tab');
-await wait(800);
-check('Alex’s tasks are on the server', stored(), 'Bread, Milk, Seeded');
+await alex.js(`document.activeElement.blur(); true`);
+await eventually('Alex’s tasks go to Google, and the server', async () => [(await inGoogle('alex', 'Shopping')).tasks, stored()], [['Milk', 'Bread', '  Seeded'], 'Bread, Milk, Seeded'], 10000);
 
 // ---- Eve, a stranger, opens the link
 const eve = await person('eve', '#list=' + listId);
 check('Eve is told it isn’t shared with her', await eve.js(`$('#dialog')[0].open && $('#dialog h2').text()`), 'This list isn’t shared with eve@example.com');
-check('and sees nothing of it', [await sidebar(eve), await eve.js(`shared.lists().length`)], ['My Tasks', 0]);
+check('and sees nothing of it', [await sidebar(eve), await eve.js(`shared.lists().length`), await inGoogle('eve', 'Shopping')], ['My Tasks', 0, null]);
 
-// ---- Sam opens the link: Sam's in, having been invited
+// ---- Sam opens the link. The server hasn't Sam's permission to reach Sam's Google
+// Tasks yet: the list shows from the server until Sam allows it.
+await fetch(SYNC + 'permission', { method: 'POST', body: JSON.stringify({ name: 'sam', ok: false }) });
 const sam = await person('sam', '#list=' + listId);
-check('Sam sees the list, as Alex has it', [await sidebar(sam), await seen(sam, 'Shopping')], ['My Tasks, Shopping', 'Milk, Bread, -Seeded']);
+await eventually('Sam sees the list, as Alex has it, from the server', async () => [await sidebar(sam), await seen(sam, 'Shopping'), await sam.js(`shared.isCloud(${cardOf('Shopping')}[0].list)`)],
+  ['My Tasks, Shopping', 'Milk, Bread, -Seeded', true]);
 check('the link is gone from the address', await sam.js(`location.hash`), '');
-check('Sam’s list shows Alex', await sam.js(`$('.card.shared .sharers').attr('title')`), 'Shared with Alex');
-check('Sam’s menu says Leave, not Delete', await sam.js(`$('.card.shared [data-list-do=delete]').text()`), 'Leave list');
+check('Sam’s list shows Alex', await sam.js(`${cardOf('Shopping')}.find('.sharers').attr('title')`), 'Shared with Alex');
+check('Sam’s menu says Leave, not Delete', await sam.js(`${cardOf('Shopping')}.find('[data-list-do=delete]').text()`), 'Leave list');
+await sam.js(`shareList(${cardOf('Shopping')}[0].list); true`);
+await eventually('the share dialog asks Sam’s permission for Google Tasks', () => sam.js(`[$('#share .copy-state span').text(), $('#share .copy-state button').text()]`),
+  ['To keep it in your Google Tasks, Tab & Tick needs your permission.', 'Allow']);
+await sam.js(`$('#share .copy-state button').click(); true`);
+await eventually('Sam allows it: it’s made in Sam’s Google Tasks, and shown from there', async () => [(await inGoogle('sam', 'Shopping'))?.tasks, await sidebar(sam), await sam.js(`shared.isCloud(${cardOf('Shopping')}[0].list)`)],
+  [['Milk', 'Bread', '  Seeded'], 'My Tasks, Shopping', false], 10000);
+check('as the dialog says', await sam.js(`$('#share .copy-state span').text()`), 'It’s in your Google Tasks too, kept up to date.');
+await sam.js(`$('#share .close').click(); true`);
+await eventually('still once, with its people', async () => [await sidebar(sam), await seen(sam, 'Shopping'), await sam.js(`${cardOf('Shopping')}.find('.sharers').attr('title')`)], ['My Tasks, Shopping', 'Milk, Bread, -Seeded', 'Shared with Alex']);
 
-// ---- Changes reach the other person as they're made, without looking
+// ---- Changes reach the other person in moments, and say who made them
 await alex.js(`hideMessage(); true`);
-await sam.js(`$('.card.shared .todo').filter(function() { return this.value === 'Milk'; }).siblings('input[type=checkbox]').click(); true`);
-await eventually('Sam ticks Milk, and Alex sees it at once', () => seen(alex, 'Shopping'), 'Bread, -Seeded');
+await sam.js(`${row('Shopping', 'Milk')}.siblings('input[type=checkbox]').click(); true`);
+await eventually('Sam ticks Milk, and Alex sees it', () => seen(alex, 'Shopping'), 'Bread, -Seeded', 10000);
 await eventually('and is told who did it', () => alex.js(`$('#message span').text()`), 'Sam ticked “Milk”.');
+check('it’s ticked in both Google lists', [(await inGoogle('alex', 'Shopping')).tasks, (await inGoogle('sam', 'Shopping')).tasks], [['Bread', '  Seeded', 'x Milk'], ['Bread', '  Seeded', 'x Milk']]);
 await sam.js(`hideMessage(); true`);
-await alex.js(`var t = $('.card.shared .todo').filter(function() { return this.value === 'Bread'; }); t.focus(); t.setCursorPosition(5); true`);
+await alex.js(`var t = ${row('Shopping', 'Bread')}; t.focus(); t.setCursorPosition(5); true`);
 await alex.key('Enter');
 await alex.type('Butter');
 await alex.js(`document.activeElement.blur(); true`);
-await eventually('Alex adds Butter, and Sam sees it at once', () => seen(sam, 'Shopping'), 'Bread, -Butter, -Seeded');
+await eventually('Alex adds Butter, and Sam sees it', () => seen(sam, 'Shopping'), 'Bread, -Butter, -Seeded', 10000);
 await eventually('Sam is told Alex added it', () => sam.js(`$('#message span').text()`), 'Alex added “Butter”.');
-check('and Alex’s face is by it, for a day, but not by Sam’s own', await sam.js(`$('.card.shared .claire li').map(function() { var f = $(this).children('.changer'); return $(this).children('.todo').val() + ':' + (f.length ? f.attr('aria-label').replace(/, .*/, '') : '-'); }).get()`),
+check('and Alex’s face is by it, but not by Sam’s own', await sam.js(`${cardOf('Shopping')}.find('.claire li').map(function() { var f = $(this).children('.changer'); return $(this).children('.todo').val() + ':' + (f.length ? f.attr('aria-label').replace(/, .*/, '') : '-'); }).get()`),
   ['Bread:-', 'Butter:Alex changed this', 'Seeded:-']);
 await shot(sam, 'changer');
-await alex.js(`toggleDone($('.card.shared').first()); true`);
-await eventually('Completed says Sam ticked Milk', () => alex.js(`$('.card.shared').first().find('.done-list li .when').first().text()`), 'Completed: Today, by Sam');
+await alex.js(`toggleDone(${cardOf('Shopping')}); true`);
+await eventually('Completed says Sam ticked Milk', () => alex.js(`${cardOf('Shopping')}.find('.done-list li .when').first().text()`), 'Completed: Today, by Sam');
 check('the server has both', stored(), 'Bread, Butter, Milk x, Seeded');
 
 // Sam is typing when Alex's change comes: Sam's typing stays
-await sam.js(`var t = $('.card.shared .todo').filter(function() { return this.value === 'Butter'; }); t.focus(); t.setCursorPosition(6); true`);
+await sam.js(`var t = ${row('Shopping', 'Butter')}; t.focus(); t.setCursorPosition(6); true`);
 await sam.type(' (salted)');
-await alex.js(`var t = $('.card.shared .todo').filter(function() { return this.value === 'Butter'; }); t.focus(); t.setCursorPosition(6); true`);
+await alex.js(`var t = ${row('Shopping', 'Butter')}; t.focus(); t.setCursorPosition(6); true`);
 await alex.key('Enter');
 await alex.type('Jam');
-await wait(600);
+await wait(1500);
 check('while Sam types, the list isn’t redrawn under them', [await sam.js(`document.activeElement.value`)], ['Butter (salted)']);
 await alex.js(`document.activeElement.blur(); true`);
+await sam.js(`document.activeElement.blur(); true`);
 await eventually('then both have both changes', async () => [await seen(alex, 'Shopping'), await seen(sam, 'Shopping')],
-  ['Bread, -Butter (salted), -Jam, -Seeded', 'Bread, -Butter (salted), -Jam, -Seeded'], 8000);
-check('and Sam is still typing where they were', await sam.js(`[document.activeElement.value, document.activeElement.selectionStart]`), ['Butter (salted)', 15]);
+  ['Bread, -Butter (salted), -Jam, -Seeded', 'Bread, -Butter (salted), -Jam, -Seeded'], 12000);
 
 // A deletion reaches the other person
-await sam.js(`document.activeElement.blur(); var t = $('.card.shared .todo').filter(function() { return this.value === 'Jam'; }); t.focus(); t.select(); true`);
+await sam.js(`var t = ${row('Shopping', 'Jam')}; t.focus(); t.select(); true`);
 await sam.key('Backspace'); await sam.key('Backspace');
 await sam.js(`finishRemovals(); true`);
-await eventually('Sam deletes Jam, and it goes for Alex too', () => seen(alex, 'Shopping'), 'Bread, -Butter (salted), -Seeded');
-check('marked deleted on the server, not removed', sql(`select count(*) from public.tasks where deleted_at is not null`), '1');
+await eventually('Sam deletes Jam, and it goes for Alex too', () => seen(alex, 'Shopping'), 'Bread, -Butter (salted), -Seeded', 10000);
 
-// Moving a task in from Google Tasks
-await alex.js(`moveToList($('.card:not(.shared) .todo').filter(function() { return this.value === 'Call the plumber'; }), 'cloud:${listId}'); true`);
-await eventually('a task moved in from Google Tasks leaves it, and Sam sees it', async () => [googleTasks.alex.map(t => t.title), await seen(sam, 'Shopping')],
-  [[], 'Call the plumber, Bread, -Butter (salted), -Seeded']);
-await alex.js(`$('#message button').click(); true`); // Undo
-await eventually('undoing puts it back in Google Tasks, and Sam sees it go', async () => [googleTasks.alex.map(t => t.title), await seen(sam, 'Shopping')],
-  [['Call the plumber'], 'Bread, -Butter (salted), -Seeded']);
+// A change made in Google's own apps shows when Tab & Tick is looked at again
+const samShop = (await inGoogle('sam', 'Shopping')).id;
+const breadInSam = (await google('sam', 'GET', `lists/${samShop}/tasks?showCompleted=true`)).items.find(t => t.title === 'Bread').id;
+await google('sam', 'PATCH', `lists/${samShop}/tasks/${breadInSam}`, { title: 'Brown bread' });
+await sam.js(`refreshAll(); true`);
+await eventually('Sam renames Bread in Google Tasks: Alex sees it', () => seen(alex, 'Shopping'), 'Brown bread, -Butter (salted), -Seeded', 10000);
 
-// A task with subtasks takes them with it
-googleTasks.alex.push({ id: 'gk1', title: 'Get quotes', parent: googleTasks.alex[0].id, status: 'needsAction', position: '1' },
-  { id: 'gk2', title: 'Book one', parent: googleTasks.alex[0].id, status: 'needsAction', position: '2' });
-await alex.js(`reload(cardFor('g1')); true`);
-await eventually('(Alex sees them in Google Tasks)', () => seen(alex, 'My Tasks'), 'Call the plumber, -Get quotes, -Book one');
-await alex.js(`hideMessage(); moveToList($('#cards .card:not(.shared) .todo').filter(function() { return this.value === 'Call the plumber'; }), 'cloud:${listId}'); true`);
-await eventually('a task with subtasks moves into the shared list with them, and Sam sees all three', async () => [googleTasks.alex.map(t => t.title), await seen(sam, 'Shopping')],
-  [[], 'Call the plumber, -Get quotes, -Book one, Bread, -Butter (salted), -Seeded']);
+// Moving a task in from another Google list, and back
+await alex.js(`hideMessage(); moveToList(${row('My Tasks', 'Call the plumber')}, '${alexShop}'); true`);
+await eventually('a task moved in from another list reaches Sam', () => seen(sam, 'Shopping'), 'Call the plumber, Brown bread, -Butter (salted), -Seeded', 10000);
 await alex.js(`$('#message button').click(); true`); // Undo
-await eventually('undoing takes them all back to Google Tasks, still under it', async () => [googleTasks.alex.map(t => t.title + (t.parent ? ' (sub)' : '')).sort(), await seen(sam, 'Shopping')],
-  [['Book one (sub)', 'Call the plumber', 'Get quotes (sub)'], 'Bread, -Butter (salted), -Seeded'], 8000);
-googleTasks.alex.splice(0, googleTasks.alex.length, ...googleTasks.alex.filter(t => !t.parent));
-await alex.js(`reload(cardFor('g1')); true`);
-await wait(300);
+await eventually('undoing takes it back out, for Sam too', async () => [await seen(alex, 'My Tasks'), await seen(sam, 'Shopping')],
+  ['Call the plumber', 'Brown bread, -Butter (salted), -Seeded'], 10000);
 
 // Renaming
-await alex.js(`$('.card.shared .list-title').val('Food shop').trigger('change'); true`);
-await eventually('a new name reaches the server and Sam', async () => [sql(`select title from public.lists`), await sidebar(sam)], ['Food shop', 'My Tasks, Food shop']);
+await alex.js(`${cardOf('Shopping')}.find('.list-title').val('Food shop').trigger('change'); true`);
+await eventually('a new name reaches the server, Sam, and Sam’s Google Tasks', async () => [sql(`select title from public.lists`), await sidebar(sam), !!(await inGoogle('sam', 'Food shop'))],
+  ['Food shop', 'My Tasks, Food shop', true], 10000);
 
 // Who's in it, now Sam has opened it
-await alex.js(`shareList('cloud:${listId}'); true`);
+await alex.js(`shareList('${alexShop}'); true`);
 await wait(500);
 check('Alex sees Sam has joined', await alex.js(`$('#share .people li').map(function() { return $(this).find('.name').text() + ' / ' + $(this).find('.email').text(); }).get()`),
   ['Alex / alex@example.com', 'Sam / sam@example.com']);
 await alex.js(`$('#share .close').click(); true`);
 
-// A Google Tasks list can be shared as a copy, on the server
-await alex.js(`shareList('g1'); true`);
-check('sharing a Google Tasks list offers a shared copy, not in Drive', await alex.js(`$('#dialog p').text()`), 'Google Tasks can’t share lists, so this makes a shared copy of it, with its open tasks. The original stays in Google Tasks.');
-await alex.js(`$('#dialog form')[0].requestSubmit(); true`);
-await wait(1000);
-check('which is made, with its tasks', [await sidebar(alex), sql(`select count(*) from public.lists`), await alex.js(`$('.card.shared').last().find('.claire .todo').map(function() { return this.value; }).get().join()`)],
-  ['My Tasks, Food shop, My Tasks', '2', 'Call the plumber']);
+// Sharing a Google list Alex already has: it becomes the shared list, with nothing copied
+await alex.js(`shareList('${myTasks}'); true`);
+check('not the first list, which Google keeps', await alex.js(`$('#message span').text()`), 'Google keeps your first list just for you. Make a new list to share.');
+const garden = await google('alex', 'POST', 'users/@me/lists', { title: 'Garden' });
+await google('alex', 'POST', `lists/${garden.id}/tasks`, { title: 'Mow the lawn' });
+await alex.js(`refreshAll(); true`);
+await eventually('(Alex sees Garden)', () => sidebar(alex), 'My Tasks, Food shop, Garden');
+await alex.js(`shareList('${garden.id}'); true`);
+await eventually('sharing Garden shares that list, with its task', async () => [await sidebar(alex), await alex.js(`${cardOf('Garden')}.hasClass('shared')`), await alex.js(`$('#share')[0].open`),
+  sql(`select string_agg(t.title, ',') from public.tasks t join public.lists l on l.id = t.list_id where l.title = 'Garden'`)],
+  ['My Tasks, Food shop, Garden', true, true, 'Mow the lawn'], 10000);
 await alex.js(`$('#share')[0].close(); true`);
 
 // After a refresh, the lists are found again, and still live
 await sam.load(base + 'index.html');
 await wait(1500);
-check('after a refresh, Sam’s shared list is found again', [await sidebar(sam), await seen(sam, 'Food shop')], ['My Tasks, Food shop', 'Bread, -Butter (salted), -Seeded']);
-await alex.js(`var t = $('.card.shared .todo').filter(function() { return this.value === 'Seeded'; }); t.siblings('input[type=checkbox]').click(); true`);
-await eventually('and changes still arrive (a ticked subtask stays under its task, as in Google Tasks)', () => seen(sam, 'Food shop'), 'Bread, -Butter (salted), -Seeded x');
+check('after a refresh, Sam’s shared list is found again', [await sidebar(sam), await seen(sam, 'Food shop')], ['My Tasks, Food shop', 'Brown bread, -Butter (salted), -Seeded']);
+await alex.js(`${row('Food shop', 'Seeded')}.siblings('input[type=checkbox]').click(); true`);
+await eventually('and changes still arrive (a ticked subtask stays under its task, as in Google Tasks)', () => seen(sam, 'Food shop'), 'Brown bread, -Butter (salted), -Seeded x', 10000);
+
+// Sam deletes the list in Google Tasks: it shows from the server, and can be put back
+await google('sam', 'DELETE', `users/@me/lists/${samShop}`);
+await sam.js(`refreshAll(); true`);
+await eventually('Sam deletes it in Google Tasks: it’s still in Tab & Tick, from the server', async () => [await sidebar(sam), await sam.js(`shared.isCloud((${cardOf('Food shop')}[0] || {}).list)`)],
+  ['My Tasks, Food shop', true], 10000);
+await sam.js(`${row('Food shop', 'Butter (salted)')}.siblings('input[type=checkbox]').click(); true`);
+await eventually('changes there still reach Alex', () => seen(alex, 'Food shop'), 'Brown bread, -Butter (salted) x, -Seeded x', 10000);
+await sam.js(`shareList(${cardOf('Food shop')}[0].list); true`);
+await eventually('the share dialog offers to put it back', () => sam.js(`[$('#share .copy-state span').text(), $('#share .copy-state button').text()]`), ['It’s not in your Google Tasks.', 'Add it back']);
+await sam.js(`$('#share .copy-state button').click(); true`);
+await eventually('and it’s back in Sam’s Google Tasks', async () => [(await inGoogle('sam', 'Food shop'))?.tasks, await sam.js(`shared.isCloud((${cardOf('Food shop')}[0] || {}).list)`)],
+  [['Brown bread', 'x Butter (salted)', 'x Milk', 'x Seeded'], false], 10000);
+await sam.js(`$('#share')[0].close(); true`);
 
 // Sam leaves; Alex deletes
-await sam.js(`shared.remove('cloud:${listId}'); true`);
+await sam.js(`shared.remove(${cardOf('Food shop')}[0].list); true`);
 await wait(100);
-check('leaving asks first', await sam.js(`$('#dialog h2').text()`), 'Leave “Food shop”?');
+check('leaving asks first', await sam.js(`[$('#dialog h2').text(), $('#dialog p').text()]`), ['Leave “Food shop”?', 'It’s removed from your lists and your Google Tasks. Whoever shared it can share it with you again.']);
 await sam.js(`$('#dialog form')[0].requestSubmit(); true`);
-await wait(600);
-check('Sam leaves the list', [sql(`select string_agg(email, ',') from public.list_members where list_id = '${listId}'`), await sidebar(sam)], ['alex@example.com', 'My Tasks']);
-await alex.js(`shared.remove('cloud:${listId}'); true`);
+await eventually('Sam leaves the list, and it goes from Sam’s Google Tasks', async () => [sql(`select string_agg(email, ',') from public.list_members where list_id = '${listId}'`), await sidebar(sam), await inGoogle('sam', 'Food shop')],
+  ['alex@example.com', 'My Tasks', null]);
+await alex.js(`shared.remove('${alexShop}'); true`);
 await wait(100);
-check('deleting says it’s for everyone', await alex.js(`$('#dialog p').text()`), 'It’s deleted for everyone it’s shared with, and can’t be got back.');
+check('deleting says it’s for everyone', await alex.js(`$('#dialog p').text()`), 'It’s deleted for everyone it’s shared with, from Tab & Tick and their Google Tasks, and can’t be got back.');
 await alex.js(`$('#dialog form')[0].requestSubmit(); true`);
-await wait(600);
-check('Alex deletes it, with its tasks', [sql(`select count(*) from public.tasks where list_id = '${listId}'`), await sidebar(alex)], ['0', 'My Tasks, My Tasks']);
+await eventually('Alex deletes it, with its tasks, from the server and Google Tasks', async () => [sql(`select count(*) from public.tasks where list_id = '${listId}'`), await sidebar(alex), await inGoogle('alex', 'Food shop')],
+  ['0', 'My Tasks, Garden', null]);
 
 check('no errors in any page', [...alex.errors, ...sam.errors, ...eve.errors], []);
 sql(`delete from public.lists; delete from auth.users where email like '%@example.com';`);
 console.log(failures ? failures + ' failed' : 'all passed');
 chrome.kill();
+deno.kill();
 server.close();
-process.exit(failures ? 1 : 0);

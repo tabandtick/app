@@ -102,4 +102,65 @@ delete from public.lists;
 reset role;
 select pg_temp.check((select count(*) from public.tasks) = 0, 'deleting the list deletes its tasks');
 
+-- ---- Copies in Google Tasks (see …_google_copies.sql)
+-- Alex shares a Google list; Sam joins and gets a copy; Eve sees none of it.
+select pg_temp.be('alex');
+create temp table g as select public.share_list('Groceries', 'gl-alex') as id;
+grant select on g to authenticated;
+select pg_temp.check((select count(*) from public.google_copies c join g on c.list_id = g.id where c.tasklist = 'gl-alex') = 1, 'sharing a Google list makes it Alex''s copy');
+select pg_temp.check(public.share_list('Groceries', 'gl-alex') = (select id from g), 'sharing it again gives the same list');
+select pg_temp.refused($$update public.google_copies set tasklist = 'other'$$, 'Alex can''t change a copy directly');
+select pg_temp.refused($$insert into public.google_copy_tasks (list_id, user_id, task_id, base) select id, 'a0000000-0000-0000-0000-000000000001', 'x', '{}' from g$$, 'Alex can''t add copy tasks');
+select pg_temp.refused($$select public.copies_key()$$, 'Alex can''t read the sync''s key');
+select pg_temp.refused($$select * from public.claim_copies()$$, 'Alex can''t claim copies');
+select pg_temp.refused($$select * from public.apply_copy_changes((select id from g), 'a0000000-0000-0000-0000-000000000002', '[{"id":"z","title":"Fake"}]')$$, 'Alex can''t make changes as Sam');
+insert into public.list_members (list_id, email) select id, 'sam@example.com' from g;
+reset role;
+
+select pg_temp.be('sam');
+select pg_temp.check(public.join_lists() = 1, 'Sam joins Groceries');
+select pg_temp.check((select count(*) from public.google_copies) = 1, 'Sam sees only his own copy');
+select pg_temp.check((select tasklist from public.google_copies) is null, 'Sam''s copy is made at the next sync');
+reset role;
+
+select pg_temp.be('eve');
+select pg_temp.check((select count(*) from public.google_copies) = 0, 'Eve sees no copies');
+select pg_temp.check((select count(*) from public.google_copy_tasks) = 0, 'Eve sees no copy tasks');
+reset role;
+
+-- The sync applies a change from Sam's Google list: recorded as Sam's, and the other
+-- copies (only) are behind. The server has no user.
+select set_config('request.jwt.claims', '', true);
+update public.google_copies set dirty = false, tasklist = case when user_id = 'a0000000-0000-0000-0000-000000000002' then 'gl-sam' else tasklist end;
+select pg_temp.check((select count(*) from public.apply_copy_changes((select id from g), 'a0000000-0000-0000-0000-000000000002', '[{"id":"g1","title":"Eggs","position":"5"}]')) = 1, 'the sync saves a change');
+select pg_temp.check((select updated_by from public.tasks where id = 'g1') = 'a0000000-0000-0000-0000-000000000002', 'it''s recorded as Sam''s');
+select pg_temp.check((select dirty from public.google_copies where user_id = 'a0000000-0000-0000-0000-000000000001' and list_id = (select id from g)), 'Alex''s copy is behind');
+select pg_temp.check(not (select dirty from public.google_copies where user_id = 'a0000000-0000-0000-0000-000000000002' and list_id = (select id from g)), 'Sam''s isn''t, as it came from there');
+
+-- Nobody signed in can say who changed a task
+select pg_temp.be('sam');
+select set_config('tabandtick.by', 'a0000000-0000-0000-0000-000000000001', false);
+update public.tasks set title = 'Brown eggs' where id = 'g1';
+select pg_temp.check((select updated_by from public.tasks where id = 'g1') = 'a0000000-0000-0000-0000-000000000002', 'Sam can''t say Alex changed it');
+select set_config('tabandtick.by', '', false);
+-- Sam leaves: his Google list is deleted at the next sync
+delete from public.list_members where user_id = 'a0000000-0000-0000-0000-000000000002' and list_id = (select id from g);
+reset role;
+select pg_temp.check((select count(*) from public.google_copies_to_remove where tasklist = 'gl-sam') = 1, 'Sam leaving deletes his Google list');
+
+-- Alex deleted his copy in Google, and adds it back
+update public.google_copies set wanted = false, tasklist = null where user_id = 'a0000000-0000-0000-0000-000000000001' and list_id = (select id from g);
+select pg_temp.be('alex');
+select public.add_back((select id from g));
+select pg_temp.check((select wanted and tasklist is null from public.google_copies where list_id = (select id from g)), 'Alex adds it back');
+reset role;
+update public.google_copies set tasklist = 'gl-alex-2' where list_id = (select id from g);
+
+-- Alex deletes the list: his Google list goes too
+select pg_temp.be('alex');
+delete from public.lists where id = (select id from g);
+reset role;
+select pg_temp.check((select count(*) from public.google_copies_to_remove where tasklist = 'gl-alex-2') = 1, 'deleting the list deletes the owner''s Google list');
+select pg_temp.check((select count(*) from public.google_copies where list_id = (select id from g)) = 0, 'and its copies');
+
 rollback;

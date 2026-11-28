@@ -1,13 +1,19 @@
-// Shared lists. Google Tasks can't share a list with another account, so shared lists
-// are kept on Tab & Tick's server (Supabase), where everyone in a list sees changes
-// as they're made. To the rest of the app each is one more list: send() hands its
-// requests here, and they're answered as
-// Google Tasks would answer them, from a copy of the list kept in the page. Changes
-// are saved straight away, in order, and other people's arrive through Realtime.
-// The server decides who sees what: see supabase/migrations/…_shared_lists.sql.
+// Shared lists. Google Tasks can't share a list with another account, so each person in
+// a shared list has it as a normal Google Tasks list in their own account, and Tab &
+// Tick's server (Supabase) keeps them matched, through a record of the list in the
+// middle: see supabase/functions/_shared/copies.ts. Here, a shared list is then just
+// your Google list (linked), with people. After each change to it the server is told
+// (poke), and when someone else changes it, Realtime says so: the server is asked to
+// bring your Google list up to date, and it's shown again.
 //
-// A list's id is 'cloud:' and its id on the server. People are invited by email, and
-// see the list once they open Tab & Tick with that Google account.
+// Until your Google list is made (or if you deleted it, or the server hasn't your
+// permission), the list is shown from the server instead, with the id 'cloud:' and its
+// id there: send() hands its requests here, and they're answered as Google Tasks would
+// answer them, from a copy kept in the page. Changes are saved straight away, in order,
+// and other people's arrive through Realtime.
+//
+// The server decides who sees what: see supabase/migrations/…_shared_lists.sql. People
+// are invited by email, and see the list once they open Tab & Tick with that account.
 
 var shared = (function() {
   var PREFIX = 'cloud:';
@@ -15,15 +21,26 @@ var shared = (function() {
   var me = null; // your user id on the server
   var db = null; // the Supabase client for the account in use
   var said = ''; // the last save problem shown, so it isn't shown again and again
+  var copies = {}; // your Google lists for shared lists, by list id on the server:
+                   // { tasklist, wanted, state }; state: new, on, needs_permission, off, error
+  var linked = {}; // the other way: server list id by Google list id
+  var started = false; // whether copies are known yet (until then, as last time)
 
   var self = {
     inCloud: available,
     isShared: isShared,
+    isCloud: isCloud,
+    withGoogle: withGoogle,
+    adopt: adopt,
+    poke: poke,
+    annotate: annotate,
+    copyOf: copyOf,
+    addBack: addBack,
+    hubOf: hubOf,
+    visibleId: visibleId,
     request: request,
     lists: sharedLists,
     start: start,
-    create: create,
-    copy: copy,
     remove: remove,
     move: move,
     unsaved: unsaved,
@@ -61,10 +78,205 @@ var shared = (function() {
     me = null;
     db = null;
     said = '';
+    copies = {};
+    linked = {};
+    started = false;
+    $.each(poking, function(hub, p) { clearTimeout(p.timer); });
+    poking = {};
   }
 
-  function isShared(list) {
+  // Shown from the server, as your Google list isn't there
+  function isCloud(list) {
     return typeof list === 'string' && list.indexOf(PREFIX) === 0;
+  }
+
+  // Shared: from the server, or your Google list for it
+  function isShared(list) {
+    return isCloud(list) || !!(typeof list === 'string' && linked[list]);
+  }
+
+  // The list's id on the server, given either
+  function hubOf(list) {
+    if (isCloud(list)) return list.slice(PREFIX.length);
+    return (typeof list === 'string' && linked[list]) || null;
+  }
+
+  // The id it's shown with: your Google list's, if you have it here
+  function visibleId(hub) {
+    var c = copies[hub];
+    if (c && c.wanted && c.tasklist && window.findList && findList(c.tasklist)) return c.tasklist;
+    return PREFIX + hub;
+  }
+
+  function copyOf(list) {
+    var hub = hubOf(list);
+    return hub ? $.extend({ hub: hub }, copies[hub] || {}) : null;
+  }
+
+  // ---- Your Google lists for shared lists
+
+  function cacheKey() {
+    return 'tabandtick-copies:' + currentAccount();
+  }
+
+  // As last time, so they show as shared before the server answers: { tasklist: [id, owned] }
+  function cached() {
+    try { return JSON.parse(localStorage.getItem(cacheKey())) || {}; } catch (e) { return {}; }
+  }
+
+  function setCopies(rows) {
+    copies = {};
+    $.each(rows || [], function(i, c) { copies[c.list_id] = c; });
+    relink();
+    started = true;
+  }
+
+  function relink() {
+    linked = {};
+    var keep = {};
+    $.each(copies, function(hub, c) {
+      if (!c.wanted || !c.tasklist) return;
+      linked[c.tasklist] = hub;
+      keep[c.tasklist] = [hub, !!(known[hub] && known[hub].list.owned)];
+    });
+    try { localStorage.setItem(cacheKey(), JSON.stringify(keep)); } catch (e) { /* storage is blocked */ }
+  }
+
+  // Your Google lists, those that are shared marked so, and the shared lists whose
+  // Google list you don't have here, from the server.
+  function withGoogle(googleLists) {
+    var here = {}, before = started ? {} : cached(), out = [];
+    $.each(googleLists, function(i, list) {
+      if (list.cloud) return;
+      here[list.id] = true;
+      var was = before[list.id], hub = linked[list.id] || (was && was[0]), f = hub && known[hub];
+      if (hub && !(f && f.gone)) {
+        list.shared = true;
+        list.hub = hub;
+        list.canShare = true;
+        list.owned = f && f.list.title ? f.list.owned : !!(was && was[1]);
+      } else {
+        delete list.shared; delete list.hub; delete list.canShare; delete list.owned;
+      }
+      out.push(list);
+    });
+    $.each(known, function(id, f) {
+      if (f.gone || !f.list.title) return;
+      var c = copies[id];
+      if (c && c.wanted && c.tasklist && here[c.tasklist]) return; // shown as your Google list
+      if (c && c.wanted && c.tasklist && started) poke(PREFIX + id); // gone from Google: the server checks
+      out.push(f.list);
+    });
+    return out;
+  }
+
+  // Shares one of your Google lists: it becomes the shared list, so nothing's copied.
+  function adopt(list, done, failed) {
+    if (!client()) return later(failed, 401);
+    whoAmI(function() {
+      answer(db.rpc('share_list', { title: list.title, tasklist: list.id }), function(hub) {
+        answer(db.from('lists').select('id,title,owner').eq('id', hub).single(), function(row) {
+          know(row);
+          copies[hub] = { list_id: hub, tasklist: list.id, wanted: true, state: 'new' };
+          relink();
+          poke(list.id); // its tasks join the shared list
+          done();
+        }, failed);
+      }, failed);
+    });
+  }
+
+  // Back into your Google Tasks, after you deleted it there
+  function addBack(list, done, failed) {
+    var hub = hubOf(list);
+    if (!hub || !client()) return later(failed, 401);
+    answer(db.rpc('add_back', { l: hub }), function() {
+      copies[hub] = $.extend(copies[hub] || { list_id: hub }, { wanted: true, tasklist: null, state: 'new' });
+      poke(PREFIX + hub);
+      done();
+    }, failed);
+  }
+
+  // Ask the server to bring your Google list for a shared list up to date with the
+  // others, and theirs with yours: after you change it, when someone else did, and when
+  // you come back to the page. A moment after the last ask; then(answer) once done.
+  var poking = {}; // by server list id: { timer, running, again, thens }
+
+  function poke(list, then) {
+    var hub = hubOf(list);
+    if (!hub || !window.cloud || !cloud.syncCopy || !currentAccount()) return then ? later(then, null) : null;
+    var p = poking[hub] || (poking[hub] = { timer: null, running: false, again: false, thens: [] });
+    if (then) p.thens.push(then);
+    clearTimeout(p.timer);
+    p.timer = setTimeout(function() { syncNow(hub); }, 300);
+  }
+
+  function syncNow(hub) {
+    var p = poking[hub], began = session;
+    if (!p) return;
+    if (p.running) {
+      p.again = true;
+      return;
+    }
+    p.running = true;
+    p.again = false;
+    var thens = p.thens.splice(0);
+    cloud.syncCopy(currentAccount(), hub, function(answer) {
+      p.running = false;
+      if (began !== session) return;
+      if (answer) synced(hub, answer);
+      $.each(thens, function(i, f) { f(answer); });
+      if (p.again || p.thens.length) syncNow(hub);
+    });
+  }
+
+  function synced(hub, answer) {
+    var c = copies[hub] || (copies[hub] = { list_id: hub, wanted: true });
+    var before = c.tasklist + ' ' + c.wanted;
+    c.state = answer.state;
+    if (answer.state === 'off') {
+      c.wanted = false;
+      c.tasklist = null;
+    } else if (answer.tasklist) c.tasklist = answer.tasklist;
+    relink();
+    if (before !== c.tasklist + ' ' + c.wanted && window.refreshAll) refreshAll(); // its Google list was made, or deleted
+    if (window.copyChanged) copyChanged(hub);
+  }
+
+  // Shared lists already shown from your Google Tasks before it was known they're
+  // shared: heard from as others change them, and shown again, with who changed what
+  function follow() {
+    $.each(linked, function(tasklist, hub) {
+      var card = cardFor(tasklist);
+      if (card.length && !(known[hub] && known[hub].channel)) {
+        load(hub, function() { if (card[0].loaded) reloadSoon(card); }, function() {});
+      }
+    });
+  }
+
+  // Shared lists whose Google list is still to be made: made now
+  function makeMissing() {
+    $.each(copies, function(hub, c) {
+      if (c.wanted && !c.tasklist && c.state !== 'needs_permission') poke(PREFIX + hub);
+    });
+  }
+
+  // Who last changed each task in your Google list for a shared list, from the server
+  // (Google doesn't say): sets changedBy on the tasks Google gave, then done().
+  function annotate(path, items, done) {
+    var m = path.match(/^lists\/([^/?]+)\/tasks/), id = m && decodeURIComponent(m[1]), hub = id && linked[id];
+    if (!hub || !client()) return done();
+    load(hub, function(f) {
+      answer(db.from('google_copy_tasks').select('task_id,google_id').eq('list_id', hub).eq('user_id', me).limit(10000), function(rows) {
+        var byGoogle = {};
+        $.each(rows || [], function(i, r) { if (r.google_id) byGoogle[r.google_id] = r.task_id; });
+        $.each(items, function(i, item) {
+          var t = f.tasks[byGoogle[item.id]];
+          if (t && t.changedBy) item.changedBy = t.changedBy;
+        });
+        done();
+      }, function() { done(); });
+    }, function() { done(); });
   }
 
   function entry(id) {
@@ -132,14 +344,21 @@ var shared = (function() {
       answer(db.rpc('join_lists'), next, next);
     });
     function next() {
-      answer(db.from('lists').select('id,title,owner').order('created_at'), function(rows) {
-        var seen = {};
-        $.each(rows || [], function(i, row) { seen[row.id] = true; know(row); });
-        $.each(known, function(id, f) { if (!seen[id] && f.list.title) lost(f); });
+      var left = 2, rows = null, mine = null;
+      function both() {
+        if (--left) return;
+        if (rows) {
+          var seen = {};
+          $.each(rows, function(i, row) { seen[row.id] = true; know(row); });
+          $.each(known, function(id, f) { if (!seen[id] && f.list.title) lost(f); });
+        }
+        if (mine) setCopies(mine);
         if (done) done();
-      }, function() {
-        if (done) done();
-      });
+        makeMissing();
+        follow();
+      }
+      answer(db.from('lists').select('id,title,owner').order('created_at'), function(r) { rows = r || []; both(); }, both);
+      answer(db.from('google_copies').select('list_id,tasklist,wanted,state').eq('user_id', me), function(r) { mine = r || []; both(); }, both);
     }
   }
 
@@ -196,6 +415,8 @@ var shared = (function() {
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'lists', filter: 'id=eq.' + f.id }, function(change) {
         if (change.new && change.new.title !== undefined) know(change.new);
+        var shown = visibleId(f.id);
+        if (!isCloud(shown)) poke(shown, function() { if (window.refreshAll) refreshAll(); }); // renamed: your Google list too
       })
       // Changes are heard only once Realtime says it's listening, which can take a
       // few seconds: then catch up on any made before, or while it was away.
@@ -215,13 +436,14 @@ var shared = (function() {
     // A change of ours not yet saved here wins; ours are saved in order after theirs
     if ($.grep(f.queue, function(op) { return op.task === row.id; }).length) return;
     var was = f.tasks[row.id], before = was ? JSON.stringify(was) : '';
+    var shown = visibleId(f.id), theirs = row.updated_by && row.updated_by !== me;
     // Someone else's: say what they did (see heardChange in tasks.js)
-    if (row.updated_by && row.updated_by !== me && window.heardChange) {
+    if (theirs && window.heardChange) {
       var what = !was ? (row.deleted_at ? '' : 'added') : row.deleted_at ? 'deleted' :
         was.status !== row.status ? (row.status === 'completed' ? 'ticked' : 'unticked') :
         was.title !== (row.title || '') || (was.notes || '') !== (row.notes || '') || (was.due || '') !== (row.due || '') ? 'changed' : '';
       if (what) {
-        var listId = f.list.id, user = row.updated_by, taskId = row.id, title = row.title || (was && was.title) || '';
+        var listId = shown, user = row.updated_by, taskId = row.id, title = row.title || (was && was.title) || '';
         var tell = function() { heardChange(listId, user, taskId, what, title); };
         if (f.people && f.people[user]) tell();
         else people(listId, tell, function() {}); // someone new to this page
@@ -231,8 +453,17 @@ var shared = (function() {
     else f.tasks[row.id] = taskOf(row);
     var after = f.tasks[row.id] ? JSON.stringify(f.tasks[row.id]) : '';
     if (before === after) return; // our own, coming back
+    if (!isCloud(shown)) {
+      // Shown as your Google list: once the server has brought it up to date, again
+      if (theirs) poke(shown, function() { var card = cardFor(shown); if (card.length && card[0].loaded) reloadSoon(card); });
+      return;
+    }
     f.stale = true;
     show(f);
+  }
+
+  function reloadSoon(card) {
+    if (!reload(card)) setTimeout(function() { reloadSoon(card); }, 1000); // not while you're typing in it
   }
 
   function refresh(f) {
@@ -251,6 +482,13 @@ var shared = (function() {
       showLists();
     }
     if (!f.stale) return;
+    var shown = visibleId(f.id);
+    if (!isCloud(shown)) { // your Google list: once the server has brought it up to date
+      f.stale = false;
+      var mine = cardFor(shown);
+      if (mine.length && mine[0].loaded) poke(shown, function() { reloadSoon(mine); });
+      return;
+    }
     var card = cardFor(f.list.id);
     if (!card.length || !card[0].loaded) {
       f.stale = false;
@@ -266,7 +504,8 @@ var shared = (function() {
     f.gone = true;
     if (f.channel && db) db.removeChannel(f.channel);
     f.channel = null;
-    lists = $.grep(lists, function(list) { return list.id !== f.list.id; });
+    var shown = visibleId(f.id);
+    lists = $.grep(lists, function(list) { return list.id !== f.list.id && list.id !== shown; });
     showLists();
     showMessage('“' + f.list.title + '” was deleted, or is no longer shared with you.', null, null, 8000);
   }
@@ -278,6 +517,11 @@ var shared = (function() {
       if (f.gone || !f.tasks) return;
       if (f.queue.length) return pump(f);
       if (!f.live) refresh(f);
+    });
+    // Changes made in Google's own apps reach the server within a minute; this is now
+    $.each(linked, function(tasklist) {
+      var card = cardFor(tasklist);
+      if (card.length) poke(tasklist, function(answer) { if (answer && card[0].loaded) reloadSoon(card); });
     });
   }
 
@@ -476,41 +720,7 @@ var shared = (function() {
     return $.map(known, function(f) { return f.queue.length ? f : null; }).length > 0;
   }
 
-  // ---- Making, renaming and removing lists
-
-  // A new shared list, with the given tasks (as Google Tasks has them). done(list),
-  // or failed(status).
-  function create(title, tasks, done, failed) {
-    if (!client()) return later(failed, 401);
-    whoAmI(function() {
-      answer(db.from('lists').insert({ title: title }).select('id,title,owner').single(), function(row) {
-        var f = know(row), ids = {}, rows = [];
-        f.tasks = {};
-        $.each(tasks || [], function(i, task) { ids[task.id] = newId(); });
-        $.each(tasks || [], function(i, task) {
-          var copy = { kind: 'tasks#task', id: ids[task.id], title: task.title || '', status: task.status === 'completed' ? 'completed' : 'needsAction', position: task.position || '5' };
-          if (task.parent && ids[task.parent]) copy.parent = ids[task.parent];
-          $.each(['notes', 'due', 'completed'], function(j, key) { if (task[key]) copy[key] = task[key]; });
-          f.tasks[copy.id] = copy;
-          rows.push($.extend({ list_id: f.id, id: copy.id }, rowOf(copy)));
-        });
-        listen(f);
-        if (!rows.length) return done(f.list);
-        answer(db.from('tasks').insert(rows), function() { done(f.list); }, function(status) {
-          answer(db.from('lists').delete().eq('id', f.id)); // not half a copy
-          f.gone = true;
-          failed(status);
-        });
-      }, failed);
-    });
-  }
-
-  // A shared copy of a Google Tasks list, with its open tasks.
-  function copy(list, done, failed) {
-    fetchAll(list.id, 'showCompleted=false', function(tasks) {
-      create(list.title, tasks, done, failed);
-    }, failed);
-  }
+  // ---- Renaming and removing lists
 
   function rename(id, title, done, failed) {
     if (!client()) return later(failed, 401);
@@ -523,14 +733,16 @@ var shared = (function() {
 
   // Yours is deleted, for everyone; one shared with you is left.
   function remove(listId) {
-    var f = entry(listId.slice(PREFIX.length)), list = f.list;
+    var hub = hubOf(listId);
+    if (!hub) return;
+    var f = entry(hub), list = f.list, mine = isCloud(listId) ? null : listId;
     ask(list.owned ? {
       title: 'Delete “' + list.title + '”?',
-      text: 'It’s deleted for everyone it’s shared with, and can’t be got back.',
+      text: 'It’s deleted for everyone it’s shared with, from Tab & Tick and their Google Tasks, and can’t be got back.',
       button: 'Delete', danger: true
     } : {
       title: 'Leave “' + list.title + '”?',
-      text: 'It’s removed from your lists. Whoever shared it can share it with you again.',
+      text: 'It’s removed from your lists and your Google Tasks. Whoever shared it can share it with you again.',
       button: 'Leave', danger: true
     }, function() {
       function gone() {
@@ -538,8 +750,12 @@ var shared = (function() {
         if (f.channel && db) db.removeChannel(f.channel);
         f.channel = null;
         lists = $.grep(lists, function(other) { return other.id !== listId; });
+        delete copies[hub];
+        relink();
         showLists();
         showMessage(list.owned ? 'List deleted.' : 'You’ve left “' + list.title + '”.', null, null, 4000);
+        // Your Google list for it, now (the server would, within a minute)
+        if (mine) send('DELETE', 'users/@me/lists/' + encodeURIComponent(mine), null, function() {}, function() {});
       }
       function failed(status) {
         lastReason = '';
@@ -557,14 +773,15 @@ var shared = (function() {
 
   function link(listId) {
     var page = location.protocol === 'chrome-extension:' ? 'https://tabandtick.github.io/app/' : location.origin + location.pathname;
-    return page + '#list=' + encodeURIComponent(listId.slice(PREFIX.length));
+    return page + '#list=' + encodeURIComponent(hubOf(listId) || '');
   }
 
   // Who's in the list: done([{ id, user, name, email, role, type, photo, pending }]).
   // Kept, to say who changed what: see who().
   function people(listId, done, failed) {
-    if (!client()) return later(failed, 401);
-    var f = entry(listId.slice(PREFIX.length));
+    var hub = hubOf(listId);
+    if (!client() || !hub) return later(failed, 401);
+    var f = entry(hub);
     answer(db.rpc('list_people', { l: f.id }), function(rows) {
       var all = $.map(rows || [], function(p) {
         return { id: p.email, user: p.user_id || '', name: p.name || '', email: p.email, role: p.role === 'owner' ? 'owner' : 'writer', type: 'user', photo: p.photo || '', pending: !p.joined };
@@ -577,14 +794,14 @@ var shared = (function() {
 
   // The person with that user id in a list, if known.
   function who(listId, user) {
-    var f = isShared(listId) && known[listId.slice(PREFIX.length)];
+    var f = known[hubOf(listId)];
     return (f && f.people && f.people[user]) || null;
   }
 
   // Adds their email. They see the list when they next open Tab & Tick with it.
   function invite(listId, email, done, failed) {
     if (!client()) return later(failed, 401);
-    answer(db.from('list_members').insert({ list_id: listId.slice(PREFIX.length), email: email.toLowerCase() }), done, function(status, code) {
+    answer(db.from('list_members').insert({ list_id: hubOf(listId), email: email.toLowerCase() }), done, function(status, code) {
       if (code === '23505') return done(); // invited already
       failed(status);
     });
@@ -592,7 +809,7 @@ var shared = (function() {
 
   function uninvite(listId, email, done, failed) {
     if (!client()) return later(failed, 401);
-    answer(db.from('list_members').delete().eq('list_id', listId.slice(PREFIX.length)).eq('email', email), done, failed);
+    answer(db.from('list_members').delete().eq('list_id', hubOf(listId)).eq('email', email), done, failed);
   }
 
   return self;

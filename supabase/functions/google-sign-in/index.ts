@@ -1,18 +1,22 @@
 // Logging in: the website sends the one-time code from Google's window. This swaps it
 // for Google's tokens, keeps the refresh token (encrypted), and hands back the
 // hour-long access token and the ID token, with which the browser signs in to Supabase.
-// POST { code }  →  { access_token, expires_in, scope, id_token, kept }
-import { admin, cors, extraScopes, google, reply, seal, whoIs } from '../_shared/common.ts';
+// The extension does the same to let the server keep shared lists in its Google Tasks,
+// with its own redirect address.
+// POST { code, redirect_uri? }  →  { access_token, expires_in, scope, id_token, kept }
+import { admin, cors, extraScopes, google, REDIRECTS, reply, seal, whoIs } from '../_shared/common.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req) });
   if (req.method !== 'POST') return reply(req, 405, { error: 'method' });
   try {
-    const { code } = await req.json();
+    const { code, redirect_uri } = await req.json();
     if (typeof code !== 'string' || !code) return reply(req, 400, { error: 'no_code' });
-
     // 'postmessage' is what Google's popup uses in place of a redirect address
-    const answer = await google({ code, grant_type: 'authorization_code', redirect_uri: 'postmessage' });
+    const redirect = redirect_uri === undefined ? 'postmessage' : redirect_uri;
+    if (!REDIRECTS.has(redirect)) return reply(req, 400, { error: 'redirect' });
+
+    const answer = await google({ code, grant_type: 'authorization_code', redirect_uri: redirect });
     if (!answer.access_token || !answer.id_token) {
       return reply(req, 400, { error: answer.error || 'no_token', reason: answer.error_description || '' });
     }

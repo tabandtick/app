@@ -46,13 +46,17 @@ server or build step. Not made or endorsed by Google.
 
 **Shared lists** can be shared with anyone with a Google
 account, to see and change together, such as a household's shopping. Google Tasks can't
-share lists, so a shared list is kept on Tab & Tick's server. **Create shared list** in
-the sidebar makes one, and **Share** on it adds people by their Google email; you send
-them the link, and the list appears once they log in with that account. **Share** on a
-Google Tasks list offers a shared copy of it. Changes are saved at once and appear for
-the others as they're made; if two people change the same task at once, the later
-change wins. Shared lists aren't in Google Tasks
-itself, so they don't show in Gmail, Calendar or Google's Tasks app.
+share a list, so each person has it as a normal list in their own Google Tasks, and Tab
+& Tick's server keeps them matched. So a shared list is in Gmail, Calendar, Google's
+Tasks app and "Hey Google" too. **Share** on any list but your first shares that list;
+**Create shared list** in the sidebar makes a new one. You add people by their Google
+email and send them the link; the list appears in their Google Tasks once they open it.
+Changes made in Tab & Tick reach the others in moments, and those made in Google's own
+apps within about a minute. When two people change the same task at once, both changes
+are kept unless they changed the same thing, when the later wins; an edit beats a
+delete. Until the server has your permission to reach your Google Tasks (the share
+dialog asks), or if you delete your copy there, Tab & Tick shows the list from the
+server instead.
 
 **More than one Google account:** the account menu lists the others
 under yours, and **Add another account** adds one. Switching is at once for an account
@@ -63,7 +67,8 @@ and goes to the next.
 In the extension, Chrome's own account signs in through Chrome and stays signed in;
 others sign in through Google's page for extensions, and renew by themselves while
 they're signed in to Google in Chrome. For shared lists, it gets its own session with
-Tab & Tick's server from Google's page, quietly.
+Tab & Tick's server from Google's page, quietly, and gives the server permission to keep
+them in your Google Tasks when you click **Allow**.
 
 **?** or **Cmd/Ctrl+/** shows all the keyboard shortcuts, as does the account menu.
 
@@ -91,7 +96,7 @@ to delete anything once that time is up, or when the page closes.
 | `sw.js` | Keeps the website's own files, so it opens offline |
 | `cloud.js`, `supabase.js` | The link to Tab & Tick's server, and Supabase's library (2.49.4) |
 | `supabase/` | The server: Google sign-in tokens and the functions that use them, and shared lists, with their rules and tests |
-| `shared.js` | Shared lists, kept on the server: answers for them as Google Tasks would |
+| `shared.js` | Shared lists: which of your Google lists are shared, telling the server of changes, and showing a list from the server (answering as Google Tasks would) until it's in your Google Tasks |
 | `script.js` | Buttons, keys, dragging and counts |
 | `manifest.json`, `icons/` | The Chrome extension. The add-task icon is from Material Symbols, under the Apache License 2.0 in `icons/LICENSE-material-symbols.txt` |
 | `jquery.js` | jQuery 3.7.1 |
@@ -114,12 +119,16 @@ After changing a file, press reload on `chrome://extensions`.
 
     node tests/app.test.mjs
     node tests/shared.test.mjs
+    deno test -A supabase/tests/copies.test.ts
 
-They run the app in headless Chrome (Node 22 or later), pressing keys and clicking as a
-person would. The first is against a small fake of Google Tasks that refuses what the
-real one refuses; the second has two people, each in their own tab, sharing a list on
-a local copy of Tab & Tick's server, and a stranger who must see none of it. It needs
-Docker and the local server (see its first lines), and is skipped without them.
+The first two run the app in headless Chrome (Node 22 or later), pressing keys and
+clicking as a person would. The first is against a small fake of Google Tasks that
+refuses what the real one refuses; the second has two people, each in their own tab,
+sharing a list through a local copy of Tab & Tick's server and the sync, with Google
+Tasks in memory (`supabase/tests/sync_server.ts`, Deno), and a stranger who must see
+none of it. The third tests the sync on its own, against Google Tasks in memory
+(`supabase/tests/fake_google.ts`, which behaves as Google was seen to). The second and
+third need Docker and the local server (see their first lines), and Deno.
 `supabase/tests/shared_lists.sql` checks the server's rules on their own.
 `SHOTS=folder` saves pictures of the screens. GitHub runs them all on every push.
 
@@ -149,15 +158,24 @@ signed in. Logging in gets a one-time code from Google's window; the function
 `google-sign-in` swaps it for Google's tokens and keeps the refresh token, encrypted
 (AES-GCM, with `TOKEN_KEY`, a function secret). `google-token` returns a fresh
 hour-long Google token for a signed-in Supabase session, and `google-sign-out` forgets
-it. Tasks never go through it. Only tokens limited to Tab & Tick's own scopes are kept,
-and ones unused for six months are deleted daily.
+it unless you're in a shared list. Only tokens limited to Tab & Tick's own scopes are
+kept, and ones unused for six months are deleted daily.
 
-    supabase db push --remote                 # the table, in supabase/migrations
-    supabase functions deploy google-token    # each function in supabase/functions
+It also keeps shared lists: their people, and a record of each list in the middle,
+which is how `google-copies` keeps everyone's Google list for it matched
+(`supabase/functions/_shared/copies.ts`). It reads and changes those lists and no
+others. It runs when someone changes a shared list in Tab & Tick, when the database
+sees a change (a trigger, through `pg_net`), and every minute (`pg_cron`), for changes
+made in Google's own apps, which Google doesn't announce.
+
+    supabase db push --remote                 # the tables, in supabase/migrations
+    supabase functions deploy google-copies   # each function in supabase/functions
 
 Function secrets: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (the Website sign-in
 client's), `TOKEN_KEY`. Google is turned on as a sign-in provider in Supabase with the
-same client ID. The Chrome extension doesn't use the server.
+same client ID. In the database's vault, `project_url` is the project's address, for the
+trigger and the cron to reach `google-copies`; the key they send is made by the
+migration.
 
 ## Copyright
 

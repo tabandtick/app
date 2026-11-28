@@ -129,6 +129,10 @@ function send(method, path, body, done, failed, again, tries) {
   }).then(function(answer) {
     if (started !== session) return;
     if (answer.ok) {
+      if (method !== 'GET') pokeShared(path);
+      if (method === 'GET' && answer.result && answer.result.items && /^lists\//.test(path)) { // who changed what, in a shared list
+        return shared.annotate(path, answer.result.items, function() { if (started === session && done) done(answer.result); });
+      }
       if (done) done(answer.result);
       return;
     }
@@ -150,6 +154,15 @@ function send(method, path, body, done, failed, again, tries) {
     lastReason = answer.reason || '';
     console.info('Google: ' + method + ' ' + (answer.status || '') + ' ' + lastReason);
     if (failed) failed(answer.status);
+  });
+}
+
+// A change to a shared list: the server brings everyone else's up to date.
+function pokeShared(path) {
+  var m = path.match(/^(?:users\/@me\/)?lists\/([^/?]+)/), to = path.match(/[?&]destinationTasklist=([^&]+)/);
+  $.each([m && m[1], to && to[1]], function(i, id) {
+    id = id && decodeURIComponent(id);
+    if (id && shared.isShared(id) && !shared.isCloud(id)) shared.poke(id);
   });
 }
 
@@ -209,9 +222,10 @@ function start() {
   });
 }
 
-// Your shared lists go after your Google Tasks ones.
+// Your Google Tasks lists, with those that are shared marked so, and then shared lists
+// not (yet) in your Google Tasks: see shared.js.
 function withShared(googleLists) {
-  return $.grep(googleLists, function(list) { return !list.shared; }).concat(shared.lists());
+  return shared.withGoogle(googleLists);
 }
 
 function startShared() {
@@ -427,8 +441,8 @@ function deleteList(id) {
   });
 }
 
-// ---- Sharing. Google Tasks can't share lists, so shared ones are kept on Tab &
-// Tick's server: see shared.js.
+// ---- Sharing. Google Tasks can't share lists, so each person has a shared list in
+// their own Google Tasks, and Tab & Tick's server keeps them matched: see shared.js.
 
 var PEOPLE = '<svg class="shared-icon" width="18" height="18" viewBox="0 0 20 20"><circle cx="7.5" cy="7" r="3" fill="currentColor"/><path d="M1.5 16.5c.6-3 3-4.6 6-4.6s5.4 1.6 6 4.6z" fill="currentColor"/><circle cx="14" cy="7.5" r="2.4" fill="currentColor" opacity=".7"/><path d="M14.6 11.4c2 .3 3.5 1.8 3.9 4.1h-3.3c-.3-1.6-1-3-2.2-3.9.5-.1 1-.2 1.6-.2z" fill="currentColor" opacity=".7"/></svg>';
 
@@ -449,13 +463,25 @@ function forNewShared(then) {
 function askSharedList() {
   forNewShared(function() {
     ask({ title: 'New shared list', text: 'Share it with anyone with a Google account.', field: '', placeholder: 'List name', button: 'Create' }, function(title) {
-      shared.create(title, [], function(list) {
-        addShared(list);
-        shareList(list.id);
+      send('POST', 'users/@me/lists', { title: title }, function(list) {
+        lists.push(list);
+        shareGoogleList(list);
       }, function(status) {
         showFailure('Could not create that list.', status);
       });
     });
+  });
+}
+
+// One of your Google lists becomes shared: it's the shared list, in your Google Tasks
+function shareGoogleList(list) {
+  shared.adopt(list, function() {
+    lists = withShared(lists);
+    addShared(findList(list.id) || list);
+    shareList(list.id);
+  }, function(status) {
+    showLists();
+    showFailure('Could not share “' + list.title + '”.', status);
   });
 }
 
@@ -466,36 +492,24 @@ function addShared(list) {
   showLists();
 }
 
-// A Google Tasks list can't be shared, so offer a shared copy of it.
-function offerCopy(id) {
+// Sharing one of your Google lists. Your first list stays yours: Google won't let it
+// be deleted, as a shared list can be.
+function offerShare(id) {
   var list = findList(id);
   if (!list) return;
-  ask({
-    title: 'Share “' + list.title + '”?',
-    text: 'Google Tasks can’t share lists, so this makes a shared copy of it, with its open tasks. The original stays in Google Tasks.',
-    button: 'Make a shared copy'
-  }, function() {
-    forNewShared(function() {
-      showMessage('Copying…');
-      shared.copy(list, function(copy) {
-        hideMessage();
-        addShared(copy);
-        shareList(copy.id);
-      }, function(status) {
-        showFailure('Could not copy that list.', status);
-      });
-    });
-  });
+  if (id === defaultList) return showMessage('Google keeps your first list just for you. Make a new list to share.', null, null, 6000);
+  forNewShared(function() { shareGoogleList(list); });
 }
 
 // Who has the list, a field to add someone, and its link.
 function shareList(id) {
   var list = findList(id), dialog = $('#share'), field = dialog.find('input[type=email]'), people = dialog.find('.people');
   if (!list) return;
-  if (!list.shared) return offerCopy(id);
+  if (!list.shared) return offerShare(id);
   closeMenu();
   dialog.find('h2').text('Share “' + list.title + '”');
-  dialog.find('.share-note').text('People you add can see and change this list in Tab & Tick. Send them the link: it opens once they log in with that Google account.');
+  dialog.find('.share-note').text('People you add can see and change it, in Tab & Tick and in their Google Tasks. Send them the link: it opens once they log in with that Google account.');
+  showCopyState(id);
   field.val('').prop('disabled', list.canShare === false);
   dialog.find('.share-add button').prop('disabled', true);
   function showPeople() {
@@ -542,6 +556,43 @@ function shareList(id) {
   showPeople();
   dialog[0].showModal();
   if (!field.prop('disabled')) field.focus();
+}
+
+// The server said how your Google list for a shared list is: if it's in the share
+// dialog, it's shown.
+function copyChanged(hub) {
+  var dialog = $('#share')[0], id = dialog.list;
+  if (dialog.open && id && shared.hubOf(id) === hub) showCopyState(findList(id) ? id : shared.visibleId(hub));
+}
+
+// Whether the list is in your Google Tasks, and if not, a button to put it there
+function showCopyState(id) {
+  $('#share')[0].list = id;
+  var line = $('#share .copy-state'), c = shared.copyOf(id), button = line.find('button'), text = '', label = '', action = null;
+  if (!c) return line.hide();
+  if (c.state === 'needs_permission') {
+    text = 'To keep it in your Google Tasks, Tab & Tick needs your permission.';
+    label = 'Allow';
+    action = function() {
+      if (!auth.allowServer) return;
+      auth.allowServer(currentAccount(), function(ok) {
+        if (!ok) return showMessage('Without permission, Tab & Tick can’t keep this list in your Google Tasks.', null, null, 8000);
+        shared.poke(id, function() { showCopyState(shared.visibleId(c.hub)); });
+      });
+    };
+  } else if (c.wanted === false) {
+    text = 'It’s not in your Google Tasks.';
+    label = 'Add it back';
+    action = function() {
+      shared.addBack(id, function() { showCopyState(id); }, function(status) { showFailure('Could not add it back.', status); });
+    };
+  } else if (!c.tasklist) {
+    text = 'Adding it to your Google Tasks…';
+  } else {
+    text = 'It’s in your Google Tasks too, kept up to date.';
+  }
+  line.show().children('span').text(text);
+  button.toggle(!!action).text(label).off('click').on('click', function() { if (action) action(); });
 }
 
 function copyLink(id, button) {
@@ -593,7 +644,7 @@ function openLink() {
   var id = linkToOpen;
   if (!id || !tasksLoaded) return;
   linkToOpen = null;
-  var known = findList(id);
+  var known = findList(id) || findList(shared.visibleId(id.replace(/^cloud:/, '')));
   if (known) return showOpened(known);
   if (!shared.inCloud()) return showMessage('To open shared lists, log in again.', 'Log in', handleAuthClick);
   ask({ title: 'This list isn’t shared with ' + currentAccount(), text: 'Ask whoever sent the link to share it with this account, or switch to the account they shared it with.', button: 'Switch account' }, function() { $('#account-button').click(); });
@@ -2188,7 +2239,7 @@ function moveToList(todos, id, previous) {
   // Google moves a task between its own lists; to or from a shared list, it's copied
   // and then deleted.
   function call(source, what, kids, target, after, done, failed) {
-    var copying = shared.isShared(source) || shared.isShared(target);
+    var copying = shared.isCloud(source) || shared.isCloud(target);
     var base = 'lists/' + encodeURIComponent(source) + '/tasks/';
     function moveOne(taskId, parent, prev, ok, bad) {
       if (copying) return shared.move(source, taskId, target, prev, ok, bad);
@@ -2297,7 +2348,7 @@ function flush() {
   if (!signedIn()) return;
   var headers = { 'Authorization': 'Bearer ' + auth.token(), 'Content-Type': 'application/json' };
   function url(el) { return API + 'lists/' + encodeURIComponent(el.card[0].list) + '/tasks'; }
-  function isSharedRow(el) { return el.card && shared.isShared(el.card[0].list); }
+  function isSharedRow(el) { return el.card && shared.isCloud(el.card[0].list); }
   $('.todo').each(function() {
     var el = this, todo = $(el), id = todo.attr('id'), sent = current(todo);
     if (isSharedRow(el)) return saveTask(todo); // made in the page at once, and saved below

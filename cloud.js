@@ -1,16 +1,22 @@
 // Tab & Tick Cloud (Supabase), which keeps the website signed in. It keeps each Google
 // account's refresh token, so a fresh hour-long Google token can be had without
-// Google's window. Your Google Tasks never go through it: they go between your browser
-// and Google, as before. Lists you share are kept on it: see cloudlists.js. See
-// supabase/ for its functions and tables.
+// Google's window. Your own lists go between your browser and Google, as before. Lists
+// you share are Google Tasks lists in each member's account, which the server keeps
+// matched: see shared.js, and supabase/ for its functions and tables.
 //
-//   signIn(code, done)    after Google's window: done(answer, email) or done(null, reason)
+//   signIn(code, done)    after Google's window: done(answer, email) or done(null, reason);
+//                         answer.kept says whether the server has the account's permission
 //   token(email, done)    a fresh Google token: done(answer) or done(null, reason)
 //   has(email)            whether that account has a Tab & Tick session here
-//   signOut(email)        forget it, here and on the server
+//   signOut(email, forget)  end the session here and on the server. The server keeps its
+//                         permission while you're in a shared list, unless forget.
 //   db(email)             the Supabase client for that account, for shared lists
 //   withIdToken(email, idToken, nonce, done)  a session from Google's ID token, as the
 //                         extension gets one: done(ok)
+//   allow(code, redirect, done)  the extension's code from Google's page, so the server
+//                         can keep its shared lists in its Google Tasks: done(kept)
+//   syncCopy(email, list, done)  have the server sync your Google list for that shared
+//                         list now: done({ state, tasklist }) or done(null)
 // An answer is Google's { access_token, expires_in, scope }.
 
 var cloud = (function() {
@@ -81,6 +87,21 @@ var cloud = (function() {
 
     db: client,
 
+    allow: function(code, redirect, done) {
+      call('google-sign-in', { code: code, redirect_uri: redirect }, null, function(status, answer) {
+        done(status === 200 && !!answer.kept);
+      });
+    },
+
+    syncCopy: function(email, list, done) {
+      session(email, function(s) {
+        if (!s) return done(null);
+        call('google-copies', { list: list }, s.access_token, function(status, answer) {
+          done(status === 200 ? answer : null);
+        });
+      });
+    },
+
     withIdToken: function(email, idToken, nonce, done) {
       var c = client(email);
       if (!c) return done(false);
@@ -94,9 +115,9 @@ var cloud = (function() {
       try { return !!(email && localStorage.getItem(storageKey(email))); } catch (e) { return false; }
     },
 
-    signOut: function(email) {
+    signOut: function(email, forgetIt) {
       session(email, function(s) {
-        if (s) call('google-sign-out', {}, s.access_token, function() {});
+        if (s) call('google-sign-out', { forget: !!forgetIt }, s.access_token, function() {});
         forget(email);
       });
     }

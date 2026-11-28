@@ -470,7 +470,8 @@
   "functions": {
     "google-sign-in": { "verify_jwt": false },
     "google-token": { "verify_jwt": false },
-    "google-sign-out": { "verify_jwt": false }
+    "google-sign-out": { "verify_jwt": false },
+    "google-copies": { "verify_jwt": false }
   },
 
   "analytics": {

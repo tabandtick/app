@@ -11,8 +11,11 @@ export function later(work: PromiseLike<unknown>): void {
   try { EdgeRuntime.waitUntil(promise); } catch { /* not in Supabase's runtime: it still runs */ }
 }
 
-// The website, and local copies for development
-const ORIGINS = [/^https:\/\/tabandtick\.github\.io$/, /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/];
+// The website, the Chrome extension, and local copies for development
+const ORIGINS = [/^https:\/\/tabandtick\.github\.io$/, /^chrome-extension:\/\/amidicalcieolbecimlogomhnokopigp$/, /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/];
+
+// Where Google's window may send its code: the website's popup, or the extension's page
+export const REDIRECTS = new Set(['postmessage', 'https://amidicalcieolbecimlogomhnokopigp.chromiumapp.org/']);
 
 export function cors(req: Request): Record<string, string> {
   const origin = req.headers.get('Origin') || '';

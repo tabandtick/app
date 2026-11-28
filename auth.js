@@ -11,6 +11,8 @@
 //   canShare       whether they can be used here
 //   cloudSession(email, interactive, done)  in the extension: a session with Tab &
 //                  Tick's server, for lists kept there (the website gets one on login)
+//   allowServer(email, done)  ask Google to let the server keep shared lists in this
+//                  account's Google Tasks while you're away: done(ok)
 // done is called with true or false, and the reason if false.
 
 var SCOPE = 'https://www.googleapis.com/auth/tasks';
@@ -98,6 +100,19 @@ function extensionAuth() {
     }, function() { done(false); });
   }
 
+  // Google's page, asking for a code the server swaps for lasting permission
+  function allowServer(email, done) {
+    if (!window.cloud) return done(false);
+    var params = { client_id: CLIENT_ID, response_type: 'code', redirect_uri: chrome.identity.getRedirectURL(),
+      scope: SCOPES, access_type: 'offline', prompt: 'consent', login_hint: email || '', include_granted_scopes: 'true' };
+    chrome.identity.launchWebAuthFlow({ url: 'https://accounts.google.com/o/oauth2/v2/auth?' + $.param(params), interactive: true }, function(redirect) {
+      var reason = chrome.runtime.lastError && chrome.runtime.lastError.message;
+      var code = new URLSearchParams(((redirect || '').split('?')[1] || '').split('#')[0]).get('code');
+      if (reason || !code) return done(false);
+      cloud.allow(code, chrome.identity.getRedirectURL(), done);
+    });
+  }
+
   function keep(email) {
     tokens[email] = { token: token, until: until, scope: granted };
     stored('tabandtick-tokens', tokens);
@@ -162,7 +177,7 @@ function extensionAuth() {
       }, true);
     },
     forget: function(email) {
-      if (window.cloud) cloud.signOut(email);
+      if (window.cloud) cloud.signOut(email, true);
       delete tokens[email];
       stored('tabandtick-tokens', tokens);
       if (email === mainEmail) {
@@ -175,7 +190,8 @@ function extensionAuth() {
       }
     },
     canShare: true,
-    cloudSession: cloudSession
+    cloudSession: cloudSession,
+    allowServer: allowServer
   };
 }
 
@@ -255,10 +271,12 @@ function webAuth() {
     });
   }
 
-  function login(done, choose, blocked) {
+  // ask: ask again (prompt=consent), which is what makes Google give the server lasting
+  // permission once it's been given before
+  function login(done, choose, blocked, ask) {
     if (blocked || waiting.failed) return done(false, 'Google\u2019s sign-in script was blocked');
     if (!ready && window.google && google.accounts) ready = true;
-    if (!ready) return waiting.push(function(blocked) { login(done, choose, blocked); });
+    if (!ready) return waiting.push(function(blocked) { login(done, choose, blocked, ask); });
     google.accounts.oauth2.initCodeClient({
       client_id: CLIENT_ID,
       scope: SCOPES,
@@ -267,6 +285,7 @@ function webAuth() {
       include_granted_scopes: true,
       ux_mode: 'popup',
       select_account: !!choose,
+      prompt: ask ? 'consent' : undefined,
       login_hint: choose ? '' : hint,
       callback: function(response) {
         if (response.error) return done(false, response.error);
@@ -275,7 +294,7 @@ function webAuth() {
           if (!answer) return done(false, email); // the reason, then
           if (email) hint = email; // whichever account was chosen in Google's window
           keep({ token: answer.access_token, until: Date.now() + (answer.expires_in - 60) * 1000, scope: answer.scope || '' });
-          done(true);
+          done(true, '', answer.kept);
         });
       },
       error_callback: function(error) { done(false, error && error.type); }
@@ -328,11 +347,14 @@ function webAuth() {
       login(done, true);
     },
     forget: function(email) {
-      cloud.signOut(email);
+      cloud.signOut(email, true);
       delete tokens[email];
       keepTokens();
     },
     canShare: true,
+    allowServer: function(email, done) {
+      login(function(ok, reason, kept) { done(!!ok && !!kept); }, false, false, true);
+    },
     // The token lasts an hour. Google's window can only open on a click or a key, so
     // in its last few minutes, or once it has gone, the next one renews it. Having
     // agreed before, you aren't asked again: the window closes by itself. done(ok).
