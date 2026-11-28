@@ -856,7 +856,7 @@ check('...and it isn’t read again until the title changes', await dated(), ['D
 await reset([{ id: 'k1', title: 'Alpha', position: '1' }, { id: 'k2', title: 'Bravo', position: '2' }]);
 await js(`tickPause = 400; closeTime = 150; openTime = 300; reopenDelay = 100; true`);
 await js(`window.slideSamples = []; (function sample(t0) { var row = $('.todo').filter(function() { return this.value === 'Alpha'; }).parent(), below = row.next('li');
-  if (row.parent().is('.claire') && below.length) slideSamples.push({ gap: Math.round(below[0].getBoundingClientRect().top - row[0].getBoundingClientRect().top), h: Math.round(row[0].getBoundingClientRect().height) });
+  if (row.parent().is('.claire') && below.length) slideSamples.push({ gap: Math.round(below[0].getBoundingClientRect().top - row[0].getBoundingClientRect().top), h: Math.round(row[0].getBoundingClientRect().height), top: Math.round(row[0].getBoundingClientRect().top) });
   if (performance.now() - t0 < 900) requestAnimationFrame(function() { sample(t0); }); })(performance.now()); true`);
 { const b = await box(`$(${rowOf('Alpha')}).children('input[type=checkbox]')[0]`); await click(b[0], b[1]); } // a real click, which also focuses it
 await wait(100);
@@ -870,8 +870,8 @@ const ticking = () => js(`(function() {
 const tickBefore = await ticking();
 check('just ticked: still in place, ticked, not struck through, details not opened', [tickBefore.where, tickBefore.struck, tickBefore.ticked, tickBefore.details], ['open', 'none', true, false]);
 await wait(500);
-check('...then the task below slides up over it, which keeps its size', await js(`(function() { var full = slideSamples[0];
-  return [slideSamples.some(function(x) { return x.gap > 2 && x.gap < full.gap - 2; }), slideSamples.every(function(x) { return x.h === full.h; })]; })()`), [true, true]);
+check('...then the task below slides up over it, which keeps its size and place', await js(`(function() { var full = slideSamples[0];
+  return [slideSamples.some(function(x) { return x.gap > 2 && x.gap < full.gap - 2; }), slideSamples.every(function(x) { return x.h === full.h && x.top === full.top; })]; })()`), [true, true]);
 await wait(200);
 check('...and it goes to Completed', (await ticking()).where, 'completed');
 await js(`$('.done-list .todo').filter(function() { return this.value === 'Alpha'; }).siblings('input[type=checkbox]').click(); true`);

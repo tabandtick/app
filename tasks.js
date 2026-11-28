@@ -1061,24 +1061,39 @@ var ticking = 0; // ticks Google hasn't answered yet
 // to Completed. It doesn't shrink or fade: it's covered. Tests set these to 0.
 var tickPause = 400, closeTime = 150, openTime = 300, reopenDelay = 100;
 
-// Unticked, as in Google Tasks (measured there): it's put back under the tasks already
-// there, which slide down off it over 300ms with ease, and the list grows with them.
-function slideOpen(block) {
-  var still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (still || !openTime || !block.length || !block[0].offsetParent) return;
-  var last = block.last();
+// Moves like Google Tasks' own (measured there): the rows glide by transform, which the
+// graphics card does without laying the page out again each frame, and only the list's
+// height animates with them. "rows" start offset by "from" pixels and glide to where
+// they are; the list goes from "fromHeight" to its own height. done() when finished.
+function glide(list, rows, from, fromHeight, ms, done) {
+  var toHeight = list.offsetHeight;
+  rows.addClass('covering').css({ transition: 'none', transform: 'translateY(' + from + 'px)' });
+  $(list).css({ transition: 'none', height: fromHeight + 'px', overflow: 'visible' });
+  list.offsetHeight; // so the changes below are animated
+  rows.css({ transition: 'transform ' + ms + 'ms ease', transform: '' });
+  $(list).css({ transition: 'height ' + ms + 'ms ease', height: toHeight + 'px' });
+  return setTimeout(function() {
+    rows.removeClass('covering').css({ transition: '', transform: '' });
+    $(list).css({ transition: '', height: '', overflow: '' });
+    if (done) done();
+  }, ms);
+}
+
+function still() {
+  return window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+// Unticked, as in Google Tasks: it's put back under the tasks already there, which
+// glide down off it over 300ms with ease, as the list grows.
+function slideOpen(block, done) {
+  if (still() || !openTime || !block.length || !block[0].offsetParent) return done && done();
+  var list = block.parent()[0];
   var height = block.get().reduce(function(sum, el) { return sum + el.getBoundingClientRect().height; }, 0);
-  var over = last.nextAll().add(last.parent().nextAll()).add(last.closest('.claire').nextAll(':visible'));
-  over.addClass('covering');
   block.addClass('covered');
-  last.css({ transition: 'none', marginBottom: (-height) + 'px' }); // where they were
-  last[0].offsetHeight; // so the change below is animated
-  last.css({ transition: 'margin-bottom ' + openTime + 'ms ease', marginBottom: '' });
-  setTimeout(function() {
-    over.removeClass('covering');
+  glide(list, block.last().nextAll(), -height, list.offsetHeight - height, openTime, function() {
     block.removeClass('covered');
-    last.css({ transition: '' });
-  }, openTime);
+    if (done) done();
+  });
 }
 
 // The ripple from the tick, and, when ticking, sparks bursting out of it: Google Tasks'
@@ -1101,25 +1116,25 @@ function pop(checkbox, sparks) {
 // wait either. After the pause the rows below slide up over it, and it stays covered
 // until Google has said yes too: then it goes to Completed (see landed).
 function startLeaving(row, checkbox) {
-  var still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   var el = row[0];
-  if (still || !closeTime) return;
+  if (still() || !closeTime) return;
   clearTimeout(el.leaveTimer);
   el.leaveTimer = setTimeout(function() {
     if (!checkbox.prop('checked') || !$.contains(document, el) || !row.hasClass('leaving')) return;
+    var list = row.parent()[0], oldHeight = list.offsetHeight;
     var block = row.add(row.hasClass('subtask') ? $() : subtaskRows(row.children('.todo')));
-    var over = block.last().nextAll().add(row.parent().nextAll()).add(row.closest('.claire').nextAll(':visible'));
-    over.addClass('covering');
-    block.addClass('covered');
     var height = block.get().reduce(function(sum, b) { return sum + b.getBoundingClientRect().height; }, 0);
-    var last = block.last(), margin = parseFloat(last.css('margin-bottom')) || 0;
-    last[0].offsetHeight; // so the change below is animated
-    last.css({ transition: 'margin-bottom ' + closeTime + 'ms ease', marginBottom: (margin - height) + 'px' });
-    el.leaving = { block: block, over: over, last: last };
-    el.leaveTimer = setTimeout(function() {
+    // Out of the list's flow, where it is, under the rows that will cover it
+    $(list).css('position', 'relative'); // first, so offsetTop is within the list
+    var tops = block.map(function() { return this.offsetTop; }).get();
+    block.each(function(i) { $(this).css({ position: 'absolute', top: tops[i] + 'px', left: 0, right: 0 }); });
+    block.addClass('covered');
+    var below = block.last().nextAll();
+    el.leaving = { block: block, below: below, list: list };
+    el.leaveTimer = glide(list, below, height, oldHeight, closeTime, function() {
       el.leaving.gone = true;
       if (el.landing) el.landing();
-    }, closeTime);
+    });
   }, tickPause);
 }
 
@@ -1130,9 +1145,9 @@ function stopLeaving(row) {
   el.leaveTimer = el.leaving = el.landing = null;
   row.removeClass('leaving');
   if (!l) return;
-  l.over.removeClass('covering');
-  l.block.removeClass('covered');
-  l.last.css({ transition: '', marginBottom: '' });
+  l.block.removeClass('covered').css({ position: '', top: '', left: '', right: '' });
+  l.below.removeClass('covering').css({ transition: '', transform: '' });
+  $(l.list).css({ position: '', transition: '', height: '', overflow: '' });
 }
 
 // Google has said yes: move it once it has slid away (or now, if it wasn't going to).
@@ -1165,8 +1180,8 @@ function reopenRow(row, todo, card) {
   else card.find('.claire').prepend(row.removeClass('subtask'), along.addClass('subtask'));
   sortDone(card);
   renderMeta(row);
-  refreshRows(); // its size, before it slides open
-  slideOpen(row.add(along));
+  autosize(todo); // its own size: the rest waits until it has slid open
+  slideOpen(row.add(along), refreshRows);
 }
 
 function setCompleted(checkbox, after, quiet, failed) {
