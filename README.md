@@ -46,12 +46,12 @@ server or build step. Not made or endorsed by Google.
 
 **Shared lists** can be shared with anyone with a Google
 account, to see and change together, such as a household's shopping. Google Tasks can't
-share lists, so a shared list is kept in a file in the Google Drive of whoever made it,
-shared with the others as Drive shares any file. **Create shared list** in the sidebar
-makes one, and **Share** on it adds people by email: Drive emails them a link, which
-opens it here. **Share** on a Google Tasks list offers a shared copy of it. Changes are
-saved at once and others' changes appear within a few seconds; if two people change
-the same task at once, the later change wins. Shared lists aren't in Google Tasks
+share lists, so a shared list is kept on Tab & Tick's server. **Create shared list** in
+the sidebar makes one, and **Share** on it adds people by their Google email; you send
+them the link, and the list appears once they log in with that account. **Share** on a
+Google Tasks list offers a shared copy of it. Changes are saved at once and appear for
+the others as they're made; if two people change the same task at once, the later
+change wins. Shared lists aren't in Google Tasks
 itself, so they don't show in Gmail, Calendar or Google's Tasks app.
 
 **More than one Google account:** the account menu lists the others
@@ -62,8 +62,8 @@ and goes to the next.
 
 In the extension, Chrome's own account signs in through Chrome and stays signed in;
 others sign in through Google's page for extensions, and renew by themselves while
-they're signed in to Google in Chrome. Google's file picker, needed once to open a list
-someone shared with you, can't load in an extension, so the website opens it.
+they're signed in to Google in Chrome. For shared lists, it gets its own session with
+Tab & Tick's server from Google's page, quietly.
 
 **?** or **Cmd/Ctrl+/** shows all the keyboard shortcuts, as does the account menu.
 
@@ -89,12 +89,12 @@ to delete anything once that time is up, or when the page closes.
 | `auth.js` | Signing in, as a website or as an extension |
 | `tasks.js` | Lists, tasks, and everything that talks to Google Tasks |
 | `sw.js` | Keeps the website's own files, so it opens offline |
-| `cloud.js`, `supabase.js` | The website's link to Tab & Tick's server, and Supabase's library (2.49.4) |
-| `supabase/` | The server: a table for Google sign-in tokens, and the functions that use them |
-| `shared.js` | Shared lists, kept in Google Drive: answers for them as Google Tasks would |
+| `cloud.js`, `supabase.js` | The link to Tab & Tick's server, and Supabase's library (2.49.4) |
+| `supabase/` | The server: Google sign-in tokens and the functions that use them, and shared lists, with their rules and tests |
+| `shared.js` | Shared lists, kept on the server: answers for them as Google Tasks would |
 | `script.js` | Buttons, keys, dragging and counts |
 | `manifest.json`, `icons/` | The Chrome extension. The add-task icon is from Material Symbols, under the Apache License 2.0 in `icons/LICENSE-material-symbols.txt` |
-| `jquery.js` | jQuery 2.0.3 |
+| `jquery.js` | jQuery 3.7.1 |
 
 ## The extension
 
@@ -117,9 +117,11 @@ After changing a file, press reload on `chrome://extensions`.
 
 They run the app in headless Chrome (Node 22 or later), pressing keys and clicking as a
 person would. The first is against a small fake of Google Tasks that refuses what the
-real one refuses; the second has two people, each in their own tab, sharing a list in
-a small fake of Google Drive. `SHOTS=folder` saves pictures of its screens. GitHub runs
-both on every push, and before publishing.
+real one refuses; the second has two people, each in their own tab, sharing a list on
+a local copy of Tab & Tick's server, and a stranger who must see none of it. It needs
+Docker and the local server (see its first lines), and is skipped without them.
+`supabase/tests/shared_lists.sql` checks the server's rules on their own.
+`SHOTS=folder` saves pictures of the screens. GitHub runs them all on every push.
 
 ## Releasing
 
@@ -137,11 +139,8 @@ dashboard, before tagging.
     python3 -m http.server 8080
 
 Google sign-in only works from addresses listed under "Authorised JavaScript
-origins" for the OAuth client in `auth.js`. Shared lists also need, in the same Google
-Cloud project, the Google Drive API and the Google Picker API turned on, the
-`drive.file` scope on the consent screen, and a browser API key, limited to those
-addresses and the Picker API, as `PICKER_KEY` in `shared.js`. Pushes to `main` are published by
-GitHub Pages.
+origins" for the OAuth client in `auth.js`. Pushes to `main` are published by GitHub
+Pages.
 
 ## The server
 

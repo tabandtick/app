@@ -9,7 +9,6 @@
 //   add(done)      ask Google for another account       forget(email)
 // For shared lists:
 //   canShare       whether they can be used here
-//   hasDrive()     whether the token can open them   drive(done)  ask for that
 //   cloudSession(email, interactive, done)  in the extension: a session with Tab &
 //                  Tick's server, for lists kept there (the website gets one on login)
 // done is called with true or false, and the reason if false.
@@ -17,8 +16,6 @@
 var SCOPE = 'https://www.googleapis.com/auth/tasks';
 // Your name, email and picture, for the account button
 var SCOPES = SCOPE + ' https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email';
-// Only the files Tab & Tick makes, or that you pick for it: for shared lists
-var DRIVE = 'https://www.googleapis.com/auth/drive.file';
 var CLIENT_ID = '719894949389-8mfcps2du7nup1g0a14nfniul2fp812j.apps.googleusercontent.com';
 
 // In the extension, the account Chrome is signed in to is Chrome's to look after, so it
@@ -39,21 +36,9 @@ function extensionAuth() {
     } catch (e) { return value; }
   }
 
-  function wantsDrive(email, value) {
-    var key = 'tabandtick-drive:' + (email || 'main');
-    try {
-      if (value === true) localStorage.setItem(key, '1');
-      return localStorage.getItem(key) === '1';
-    } catch (e) { return !!value; }
-  }
-
-  function scopes(email) {
-    return SCOPES + (wantsDrive(email) ? ' ' + DRIVE : '');
-  }
-
   // Chrome's account
   function chromeToken(interactive, done) {
-    chrome.identity.getAuthToken({ interactive: interactive, scopes: scopes(mainEmail).split(' ') }, function(result) {
+    chrome.identity.getAuthToken({ interactive: interactive, scopes: SCOPES.split(' ') }, function(result) {
       var reason = chrome.runtime.lastError && chrome.runtime.lastError.message;
       if (reason) console.warn('Sign-in:', reason);
       token = (result && result.token) || (typeof result === 'string' && result) || null;
@@ -75,7 +60,7 @@ function extensionAuth() {
   function webToken(email, interactive, done, choose) {
     var params = {
       client_id: CLIENT_ID, response_type: 'token', redirect_uri: chrome.identity.getRedirectURL(),
-      scope: scopes(email), include_granted_scopes: 'true'
+      scope: SCOPES, include_granted_scopes: 'true'
     };
     if (email) params.login_hint = email;
     if (!interactive) params.prompt = 'none';
@@ -190,19 +175,7 @@ function extensionAuth() {
       }
     },
     canShare: true,
-    cloudSession: cloudSession,
-    hasDrive: function() { return !!token && granted.split(' ').indexOf(DRIVE) >= 0; },
-    drive: function(done) {
-      var email = using || '';
-      wantsDrive(using ? using : mainEmail, true);
-      if (!using) wantsDrive('', true);
-      var finish = function(ok, reason) {
-        if (ok && granted.split(' ').indexOf(DRIVE) < 0) return done(false, 'access to Drive wasn’t ticked');
-        done(ok, reason);
-      };
-      if (!email) return chromeToken(true, finish);
-      webToken(email, true, finish);
-    }
+    cloudSession: cloudSession
   };
 }
 
@@ -219,7 +192,6 @@ function webAuth() {
   var ready = false;
   var saved = null; // {token, until, scope}
   var tokens = {};
-  var DRIVE_KEY = 'tabandtick-drive:'; // and the email: set once that account has let it use Drive
 
   try {
     saved = JSON.parse(localStorage.getItem(KEY));
@@ -268,15 +240,6 @@ function webAuth() {
   var hint = ''; // the account's email, so renewing doesn't ask which account
   var renewing = false;
 
-  function wantsDrive(value) {
-    if (!hint) return false; // a new account hasn't
-    try {
-      if (value === true) localStorage.setItem(DRIVE_KEY + hint, '1');
-      if (value === false) localStorage.removeItem(DRIVE_KEY + hint);
-      return localStorage.getItem(DRIVE_KEY + hint) === '1';
-    } catch (e) { return !!value; }
-  }
-
   // A fresh token from Tab & Tick Cloud, for the account in use
   var fetching = null;
   function fromCloud(done) {
@@ -292,20 +255,15 @@ function webAuth() {
     });
   }
 
-  function hasDrive() {
-    return !!(token() && saved.scope && saved.scope.split(' ').indexOf(DRIVE) >= 0);
-  }
-
   function login(done, choose, blocked) {
     if (blocked || waiting.failed) return done(false, 'Google\u2019s sign-in script was blocked');
     if (!ready && window.google && google.accounts) ready = true;
     if (!ready) return waiting.push(function(blocked) { login(done, choose, blocked); });
     google.accounts.oauth2.initCodeClient({
       client_id: CLIENT_ID,
-      scope: SCOPES + (wantsDrive() ? ' ' + DRIVE : ''),
-      // With what you've agreed to before, such as Drive for shared lists. (The server
-      // won't keep a sign-in that has more than Tab & Tick asks for: see ALLOWED in
-      // supabase/functions/_shared/common.ts.)
+      scope: SCOPES,
+      // With what you've agreed to before. (The server won't keep a sign-in that has
+      // more than Tab & Tick asks for: see ALLOWED in supabase/functions/_shared/common.ts.)
       include_granted_scopes: true,
       ux_mode: 'popup',
       select_account: !!choose,
@@ -343,12 +301,6 @@ function webAuth() {
     // The token just got is this account's: called once Google says whose it is.
     remember: function(email) {
       hint = email || '';
-      try { // from when one account's Drive was set for the whole browser
-        if (hint && localStorage.getItem('tabandtick-drive') === '1') {
-          localStorage.setItem(DRIVE_KEY + hint, '1');
-          localStorage.removeItem('tabandtick-drive');
-        }
-      } catch (e) { /* storage is blocked */ }
       if (hint && token()) {
         $.each(tokens, function(other, kept) { // got for another, if Google's window was answered with this one
           if (other !== hint && kept.token === saved.token) delete tokens[other];
@@ -379,17 +331,8 @@ function webAuth() {
       cloud.signOut(email);
       delete tokens[email];
       keepTokens();
-      try { localStorage.removeItem(DRIVE_KEY + email); } catch (e) { /* storage is blocked */ }
     },
     canShare: true,
-    hasDrive: hasDrive,
-    drive: function(done) {
-      wantsDrive(true);
-      login(function(ok, reason) {
-        if (ok && !hasDrive()) return done(false, 'access to Drive wasn\u2019t ticked');
-        done(ok, reason);
-      }, false);
-    },
     // The token lasts an hour. Google's window can only open on a click or a key, so
     // in its last few minutes, or once it has gone, the next one renews it. Having
     // agreed before, you aren't asked again: the window closes by itself. done(ok).

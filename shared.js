@@ -1,33 +1,23 @@
-// Shared lists. Google Tasks can't share a list with another account, so a shared
-// list is kept elsewhere: new ones on Tab & Tick's server (cloudlists.js), and older
-// ones, or ones made where the server can't be used, in Google Drive. `shared`, at the
-// end, hands each request to the right one.
+// Shared lists. Google Tasks can't share a list with another account, so shared lists
+// are kept on Tab & Tick's server (Supabase), where everyone in a list sees changes
+// as they're made. To the rest of the app each is one more list: send() hands its
+// requests here, and they're answered as
+// Google Tasks would answer them, from a copy of the list kept in the page. Changes
+// are saved straight away, in order, and other people's arrive through Realtime.
+// The server decides who sees what: see supabase/migrations/…_shared_lists.sql.
 //
-// Drive lists: kept in a file in Google Drive, and Drive shares it as it would any
-// file. To the rest of the app it is one more list: send() hands its requests here,
-// and they are answered as Google Tasks would answer them, from a copy of the file
-// kept in the page. The file is saved soon after each change, and checked every few
-// seconds for other people's changes, which are merged in task by task: the later
-// change to a task wins, and a deleted task stays deleted.
-//
-// A list's id is 'drive:' and its file's id; its name is the file's name. The file:
-//   { app: 'Tab & Tick', format: 1, tasks: { id: task }, deleted: { id: when } }
-// where each task is as Google Tasks has it, with `updated` saying when it changed.
+// A list's id is 'cloud:' and its id on the server. People are invited by email, and
+// see the list once they open Tab & Tick with that Google account.
 
-var driveLists = (function() {
-  var PREFIX = 'drive:';
-  var TYPE = 'application/vnd.tabandtick.list+json';
-  var SUFFIX = ' (Tab & Tick)';
-  var FIELDS = 'id,name,version,ownedByMe,capabilities(canShare)';
-  var APP_ID = '719894949389'; // the Google Cloud project, which Drive gives the access to
-  var PICKER_KEY = 'AIzaSyCqli5EautntvKeYkysbazPjc0oxgb2tbg'; // a browser key for Google's file picker
-  var files = {}; // by file id: see entry()
-  var me = ''; // your Drive permission id, to leave a list
-  var problem = ''; // the last save problem shown, so it isn't shown again and again
+var shared = (function() {
+  var PREFIX = 'cloud:';
+  var known = {}; // by list id on the server: see entry()
+  var me = null; // your user id on the server
+  var db = null; // the Supabase client for the account in use
+  var said = ''; // the last save problem shown, so it isn't shown again and again
 
   var self = {
-    base: 'https://www.googleapis.com/', // tests change this
-    poll: 5000,
+    inCloud: available,
     isShared: isShared,
     request: request,
     lists: sharedLists,
@@ -37,24 +27,38 @@ var driveLists = (function() {
     remove: remove,
     move: move,
     unsaved: unsaved,
-    flush: flush,
-    check: checkAll,
-    open: open,
-    pick: pick,
+    flush: function() {},
+    check: check,
     link: link,
     people: people,
     invite: invite,
     uninvite: uninvite,
     reset: reset,
-    merge: merge,
     between: between
   };
 
+  // Whether this account can keep lists here: on the website, once Tab & Tick's
+  // server has a session for it.
+  function available() {
+    var email = currentAccount();
+    return !!(window.cloud && cloud.db && email && cloud.has(email) && cloud.db(email));
+  }
+
+  function client() {
+    var c = available() ? cloud.db(currentAccount()) : null;
+    if (c !== db) {
+      reset();
+      db = c;
+    }
+    return db;
+  }
+
   function reset() {
-    $.each(files, function(id, f) { clearTimeout(f.timer); });
-    files = {};
-    me = '';
-    problem = '';
+    $.each(known, function(id, f) { if (f.channel && db) db.removeChannel(f.channel); });
+    known = {};
+    me = null;
+    db = null;
+    said = '';
   }
 
   function isShared(list) {
@@ -62,125 +66,228 @@ var driveLists = (function() {
   }
 
   function entry(id) {
-    return files[id] || (files[id] = {
+    return known[id] || (known[id] = {
       id: id,
-      list: { id: PREFIX + id, title: '', shared: true },
-      doc: null,      // the copy in the page
-      version: null,  // Drive's version of the file that doc was last merged with
+      list: { id: PREFIX + id, title: '', shared: true, cloud: true, canShare: true },
+      tasks: null,    // the copy in the page, by task id
       waiting: [],    // callers waiting for it to load
-      saving: false, again: false, dirty: false, timer: null,
-      stale: false    // changed by someone else, and not yet shown
+      queue: [],      // changes not yet saved, in order
+      saving: false,
+      channel: null, live: false,
+      behind: false,  // to catch up once what's waiting is saved
+      stale: false,   // changed by someone else, and not yet shown
+      gone: false
     });
   }
 
   function sharedLists() {
-    return $.map(files, function(f) { return f.gone || !f.list.title ? null : f.list; });
-  }
-
-  function titleOf(name) {
-    name = name || '';
-    return name.slice(-SUFFIX.length) === SUFFIX ? name.slice(0, -SUFFIX.length) : name;
+    return $.map(known, function(f) { return f.gone || !f.list.title ? null : f.list; });
   }
 
   function later(f, value) {
     if (f) setTimeout(function() { f(value); }, 0);
   }
 
-  // Calls Drive. done(result), or failed(status), which is undefined when Drive
-  // couldn't be reached. options: { type, keepalive }.
-  function drive(method, path, body, done, failed, options) {
-    options = options || {};
-    var started = session;
-    var init = { method: method, headers: { 'Authorization': 'Bearer ' + auth.token() }, keepalive: !!options.keepalive };
-    if (body !== null && body !== undefined) {
-      init.headers['Content-Type'] = options.type || 'application/json';
-      init.body = typeof body === 'string' ? body : JSON.stringify(body);
-    }
-    fetch(self.base + path, init).then(function(response) {
-      return response.text().then(function(text) {
-        if (!response.ok) {
-          var reason = '';
-          try { reason = JSON.parse(text).error.message; } catch (e) { /* not Google's usual answer */ }
-          throw { status: response.status, reason: reason };
-        }
-        return text ? JSON.parse(text) : null;
-      });
-    }).then(function(result) {
-      if (started === session && done) done(result);
-    }, function(error) {
-      if (started !== session) return;
-      lastReason = (error && error.reason) || '';
-      console.info('Drive: ' + method + ' ' + path.split('?')[0] + ' ' + ((error && error.status) || '') + ' ' + lastReason);
-      if (failed) failed(error && error.status);
+  // A Supabase answer as done(data) or failed(status): status is undefined when the
+  // server couldn't be reached, as for Google.
+  function answer(query, done, failed) {
+    var started = session, c = db;
+    query.then(function(result) {
+      if (started !== session || c !== db) return;
+      if (result.error) {
+        var status = result.status || undefined;
+        console.info('Tab & Tick Cloud: ' + (status || 'no connection') + ' ' + (result.error.code || '') + ' ' + result.error.message);
+        if (failed) failed(status, result.error.code);
+      } else if (done) done(result.data);
+    }, function() {
+      if (started === session && c === db && failed) failed(undefined);
     });
+  }
+
+  function whoAmI(done) {
+    if (me) return done(me);
+    db.auth.getSession().then(function(result) {
+      var s = result.data && result.data.session;
+      me = s ? s.user.id : null;
+      done(me);
+    }, function() { done(null); });
   }
 
   // ---- Which lists there are
 
-  // Ask Drive for the shared lists you have, then call done.
+  // Join any lists shared with this account since, then ask which you have. Lists
+  // gone since last time (deleted, or you were removed) go from the page.
+  var tried = {}; // accounts whose quiet session was tried, in the extension
+
   function start(done) {
-    if (!auth.hasDrive()) return later(done);
-    drive('GET', 'drive/v3/files?q=' + encodeURIComponent("mimeType='" + TYPE + "' and trashed=false") +
-      '&orderBy=createdTime&pageSize=100&fields=' + encodeURIComponent('files(' + FIELDS + ')'), null, function(result) {
-      $.each((result && result.files) || [], function(i, meta) { know(meta); });
-      if (done) done();
-    }, function() {
-      if (done) done();
+    var email = currentAccount();
+    if (!available() && auth.cloudSession && email && !tried[email]) {
+      tried[email] = true;
+      return auth.cloudSession(email, false, function() { start(done); });
+    }
+    if (!client()) return later(done);
+    whoAmI(function() {
+      answer(db.rpc('join_lists'), next, next);
     });
+    function next() {
+      answer(db.from('lists').select('id,title,owner').order('created_at'), function(rows) {
+        var seen = {};
+        $.each(rows || [], function(i, row) { seen[row.id] = true; know(row); });
+        $.each(known, function(id, f) { if (!seen[id] && f.list.title) lost(f); });
+        if (done) done();
+      }, function() {
+        if (done) done();
+      });
+    }
   }
 
-  function know(meta) {
-    var f = entry(meta.id);
+  function know(row) {
+    var f = entry(row.id), title = row.title || '';
     f.gone = false;
-    f.list.title = titleOf(meta.name);
-    f.list.owned = !!meta.ownedByMe;
-    f.list.canShare = !(meta.capabilities && meta.capabilities.canShare === false);
+    if (f.list.title && f.list.title !== title) f.list.renamed = true;
+    f.list.title = title;
+    f.list.owned = row.owner === me;
+    if (f.list.renamed) show(f);
     return f;
   }
 
-  // The list's file, loaded once. done(f), or failed(status).
+  // The list's tasks, loaded once, then kept up to date. done(f), or failed(status).
   function load(id, done, failed) {
     var f = entry(id);
-    if (f.doc) return done(f);
+    if (f.tasks) return done(f);
+    if (!client()) return later(failed, 401);
     f.waiting.push([done, failed]);
     if (f.waiting.length > 1) return;
-    function finish(ok, status) {
-      $.each(f.waiting.splice(0), function(i, w) {
-        if (ok) w[0](f);
-        else if (w[1]) w[1](status);
-      });
-    }
-    drive('GET', 'drive/v3/files/' + id + '?fields=' + encodeURIComponent(FIELDS), null, function(meta) {
-      know(meta);
-      drive('GET', 'drive/v3/files/' + id + '?alt=media', null, function(doc) {
-        f.doc = tidy(doc);
-        f.version = meta.version;
-        finish(true);
-      }, function(status) { finish(false, status); });
-    }, function(status) { finish(false, status); });
+    listen(f);
+    fetchTasks(f, function() {
+      $.each(f.waiting.splice(0), function(i, w) { w[0](f); });
+    }, function(status) {
+      $.each(f.waiting.splice(0), function(i, w) { if (w[1]) w[1](status); });
+    });
   }
 
-  function tidy(doc) {
-    doc = doc && typeof doc === 'object' ? doc : {};
-    return { app: 'Tab & Tick', format: 1, tasks: doc.tasks || {}, deleted: doc.deleted || {} };
+  function fetchTasks(f, done, failed) {
+    answer(db.from('tasks').select('*').eq('list_id', f.id).is('deleted_at', null).limit(5000), function(rows) {
+      var tasks = {};
+      $.each(rows || [], function(i, row) { tasks[row.id] = taskOf(row); });
+      // Changes not yet saved stay as they are here
+      if (f.tasks) $.each(f.queue, function(i, op) { if (f.tasks[op.task]) tasks[op.task] = f.tasks[op.task]; else delete tasks[op.task]; });
+      var changed = !f.tasks || canon(tasks) !== canon(f.tasks);
+      f.tasks = tasks;
+      if (changed) f.stale = true;
+      done(changed);
+    }, failed);
+  }
+
+  // Other people's changes, as they're made.
+  function listen(f) {
+    if (f.channel) return;
+    f.channel = db.channel('list:' + f.id)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: 'list_id=eq.' + f.id }, function(change) {
+        heard(f, change.new);
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'lists', filter: 'id=eq.' + f.id }, function(change) {
+        if (change.new && change.new.title !== undefined) know(change.new);
+      })
+      // Changes are heard only once Realtime says it's listening, which can take a
+      // few seconds: then catch up on any made before, or while it was away.
+      .on('system', {}, function(message) {
+        if (message && message.extension === 'postgres_changes' && message.status === 'ok') {
+          f.live = true;
+          refresh(f);
+        }
+      })
+      .subscribe(function(status) {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') f.live = false;
+      });
+  }
+
+  function heard(f, row) {
+    if (!f.tasks || !row || !row.id) return;
+    // A change of ours not yet saved here wins; ours are saved in order after theirs
+    if ($.grep(f.queue, function(op) { return op.task === row.id; }).length) return;
+    var before = f.tasks[row.id] ? JSON.stringify(f.tasks[row.id]) : '';
+    if (row.deleted_at) delete f.tasks[row.id];
+    else f.tasks[row.id] = taskOf(row);
+    var after = f.tasks[row.id] ? JSON.stringify(f.tasks[row.id]) : '';
+    if (before === after) return; // our own, coming back
+    f.stale = true;
+    show(f);
+  }
+
+  function refresh(f) {
+    if (!f.tasks || f.gone) return;
+    if (f.queue.length) {
+      f.behind = true;
+      return;
+    }
+    fetchTasks(f, function(changed) { if (changed) show(f); }, function() {});
+  }
+
+  // Show what others changed, unless that would get in the way: then try again soon.
+  function show(f) {
+    if (f.list.renamed) {
+      f.list.renamed = false;
+      showLists();
+    }
+    if (!f.stale) return;
+    var card = cardFor(f.list.id);
+    if (!card.length || !card[0].loaded) {
+      f.stale = false;
+      return;
+    }
+    if (reload(card)) f.stale = false;
+    else setTimeout(function() { show(f); }, 1000);
+  }
+
+  // Deleted, or you're no longer in it.
+  function lost(f) {
+    if (f.gone) return;
+    f.gone = true;
+    if (f.channel && db) db.removeChannel(f.channel);
+    f.channel = null;
+    lists = $.grep(lists, function(list) { return list.id !== f.list.id; });
+    showLists();
+    showMessage('“' + f.list.title + '” was deleted, or is no longer shared with you.', null, null, 8000);
+  }
+
+  // Back to the page after a while, or back online: save what's waiting, and catch up.
+  function check() {
+    if (!signedIn() || document.hidden || !db) return;
+    $.each(known, function(id, f) {
+      if (f.gone || !f.tasks) return;
+      if (f.queue.length) return pump(f);
+      if (!f.live) refresh(f);
+    });
   }
 
   // ---- Answering as Google Tasks would
 
-  function now() {
-    return new Date().toISOString();
+  function taskOf(row) {
+    var task = { kind: 'tasks#task', id: row.id, title: row.title || '', status: row.status, position: row.position, updated: row.updated };
+    $.each(['parent', 'notes', 'due', 'completed'], function(i, key) { if (row[key]) task[key] = row[key]; });
+    return task;
+  }
+
+  function rowOf(task) {
+    return { parent: task.parent || null, title: task.title || '', notes: task.notes || null, due: task.due || null,
+      status: task.status, completed: task.completed || null, position: task.position };
+  }
+
+  function canon(tasks) {
+    return JSON.stringify($.map(Object.keys(tasks).sort(), function(id) {
+      var t = $.extend({}, tasks[id]);
+      delete t.updated;
+      return [[id, JSON.stringify(t, Object.keys(t).sort())]];
+    }));
   }
 
   function newId() {
     return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   }
 
-  function copyOf(task) {
-    return $.extend({ kind: 'tasks#task' }, task);
-  }
-
-  function siblings(doc, parent, not) {
-    return $.grep($.map(doc.tasks, function(task) { return task; }), function(task) {
+  function siblings(tasks, parent, not) {
+    return $.grep($.map(tasks, function(task) { return task; }), function(task) {
       return (task.parent || '') === (parent || '') && task.id !== not;
     }).sort(function(a, b) {
       return a.position < b.position ? -1 : a.position > b.position ? 1 : a.id < b.id ? -1 : 1;
@@ -188,8 +295,8 @@ var driveLists = (function() {
   }
 
   // A position after previous among the parent's tasks, or first.
-  function place(doc, parent, previous, not) {
-    var list = siblings(doc, parent, not), at = -1;
+  function place(tasks, parent, previous, not) {
+    var list = siblings(tasks, parent, not), at = -1;
     $.each(list, function(i, task) { if (task.id === previous) at = i; });
     var a = at >= 0 ? list[at].position : '', next = list[at + 1];
     return between(a, next ? next.position : null);
@@ -212,58 +319,55 @@ var driveLists = (function() {
   }
 
   function request(method, path, body, done, failed) {
-    var m = path.match(/^(users\/@me\/)?lists\/drive%3A([^/?]+)(?:\/tasks(?:\/([^/?]+))?(\/move)?)?(?:\?(.*))?$/);
+    var m = path.match(/^(users\/@me\/)?lists\/cloud%3A([^/?]+)(?:\/tasks(?:\/([^/?]+))?(\/move)?)?(?:\?(.*))?$/);
     if (!m) return later(failed, 400);
     var id = decodeURIComponent(m[2]), whole = !!m[1], taskId = m[3] && decodeURIComponent(m[3]);
     var q = new URLSearchParams(m[5] || '');
-    if (whole && method === 'PATCH') return rename(id, body.title, done, failed);
+    if (whole && method === 'PATCH') return rename(id, (body && body.title) || '', done, failed);
+    if (whole) return later(failed, 400);
     load(id, function(f) {
-      var doc = f.doc, task = taskId && doc.tasks[taskId], result = {};
+      var tasks = f.tasks, task = taskId && tasks[taskId], result = null;
       if (taskId && !task) return later(failed, 404);
-      if (whole) return later(failed, 400);
       if (method === 'GET' && !taskId) {
         var min = q.get('updatedMin') || '';
-        result = { kind: 'tasks#tasks', items: $.map(doc.tasks, function(t) {
+        result = { kind: 'tasks#tasks', items: $.map(tasks, function(t) {
           if (q.get('showCompleted') === 'false' && t.status === 'completed') return null;
           if (min && (t.updated || '') < min) return null;
-          return copyOf(t);
+          return $.extend({}, t);
         }) };
       } else if (method === 'GET') {
-        result = copyOf(task);
+        result = $.extend({}, task);
       } else if (method === 'POST' && !taskId) {
         var parent = q.get('parent') || undefined;
-        if (parent && (!doc.tasks[parent] || doc.tasks[parent].parent)) return later(failed, 400);
-        task = { id: newId(), title: '', status: 'needsAction' };
+        if (parent && (!tasks[parent] || tasks[parent].parent)) return later(failed, 400);
+        task = { kind: 'tasks#task', id: newId(), title: '', status: 'needsAction' };
         if (parent) task.parent = parent;
-        task.position = place(doc, parent, q.get('previous'));
+        task.position = place(tasks, parent, q.get('previous'));
         change(task, body || {});
-        doc.tasks[task.id] = task;
-        result = copyOf(task);
+        tasks[task.id] = task;
+        save(f, { task: task.id, insert: $.extend({ list_id: f.id, id: task.id }, rowOf(task)) });
+        result = $.extend({}, task);
       } else if (method === 'PATCH') {
         change(task, body || {});
-        result = copyOf(task);
+        save(f, { task: task.id, update: rowOf(task) });
+        result = $.extend({}, task);
       } else if (method === 'DELETE') {
-        var when = now();
-        $.each(doc.tasks, function(other, t) {
-          if (other === taskId || t.parent === taskId) {
-            delete doc.tasks[other];
-            doc.deleted[other] = when;
-          }
-        });
-        result = null;
+        var gone = $.grep(Object.keys(tasks), function(other) { return other === taskId || tasks[other].parent === taskId; });
+        $.each(gone, function(i, other) { delete tasks[other]; });
+        $.each(gone, function(i, other) { save(f, { task: other, update: { deleted_at: new Date().toISOString() } }); });
       } else if (method === 'POST' && m[4]) {
         var to = q.get('parent') || undefined;
         if (q.get('destinationTasklist')) return later(failed, 400); // see move()
-        if (to && (to === taskId || !doc.tasks[to] || doc.tasks[to].parent)) return later(failed, 400);
-        task.position = place(doc, to, q.get('previous'), taskId);
+        if (to && (to === taskId || !tasks[to] || tasks[to].parent)) return later(failed, 400);
+        task.position = place(tasks, to, q.get('previous'), taskId);
         if (to) task.parent = to;
         else delete task.parent;
-        task.updated = now();
-        result = copyOf(task);
+        task.updated = new Date().toISOString();
+        save(f, { task: task.id, update: { parent: task.parent || null, position: task.position } });
+        result = $.extend({}, task);
       } else {
         return later(failed, 400);
       }
-      if (method !== 'GET') saveSoon(f);
       later(done, result);
     }, failed);
   }
@@ -278,12 +382,12 @@ var driveLists = (function() {
     if (task.status !== 'completed') {
       task.status = 'needsAction';
       delete task.completed;
-    } else if (!task.completed) task.completed = now();
-    task.updated = now();
+    } else if (!task.completed) task.completed = new Date().toISOString();
+    task.updated = new Date().toISOString();
   }
 
   // Moving a task between a shared list and another list: made in the one, then
-  // deleted from the other, as neither Drive nor Google can move it across.
+  // deleted from the other, as neither the server nor Google can move it across.
   function move(from, taskId, to, previous, done, failed) {
     var base = 'lists/' + encodeURIComponent(from) + '/tasks/' + encodeURIComponent(taskId);
     send('GET', base, null, function(task) {
@@ -299,183 +403,83 @@ var driveLists = (function() {
     }, failed);
   }
 
-  // ---- Saving, and hearing of other people's changes
+  // ---- Saving: one change at a time, in the order made
 
-  function saveSoon(f) {
-    f.dirty = true;
-    clearTimeout(f.timer);
-    f.timer = setTimeout(function() { save(f); }, 300);
+  function save(f, op) {
+    f.queue.push(op);
+    pump(f);
   }
 
-  function save(f) {
-    clearTimeout(f.timer);
-    if (!f.doc) return;
-    if (f.saving) {
-      f.again = true;
-      return;
-    }
+  function pump(f) {
+    if (f.saving || !f.queue.length || !db) return;
+    var op = f.queue[0];
     f.saving = true;
-    f.again = false;
-    f.dirty = false;
-    function failed(status) {
+    var table = db.from('tasks');
+    var query = op.insert ? table.insert(op.insert) : table.update(op.update).eq('list_id', f.id).eq('id', op.task);
+    answer(query, function() {
       f.saving = false;
-      f.dirty = true; // the next check tries again
-      if (status === 404) return lost(f);
-      var text = 'Could not save “' + f.list.title + '”.';
-      if (problem !== text) {
-        problem = text;
-        showFailure(text + ' Trying again.', status);
+      f.queue.shift();
+      said = '';
+      if (f.queue.length) return pump(f);
+      if (f.behind) {
+        f.behind = false;
+        refresh(f);
       }
-    }
-    // Merge in what others have saved since, so as not to save over it
-    fresh(f, function() {
-      drive('PATCH', 'upload/drive/v3/files/' + f.id + '?uploadType=media&fields=version', JSON.stringify(f.doc), function(result) {
-        f.version = result.version;
-        f.saving = false;
-        problem = '';
-        if (f.again || f.dirty) save(f);
-      }, failed, { type: TYPE });
-    }, failed);
-  }
-
-  // Bring the copy up to date with Drive's, then call done.
-  function fresh(f, done, failed) {
-    drive('GET', 'drive/v3/files/' + f.id + '?fields=' + encodeURIComponent(FIELDS), null, function(meta) {
-      var title = titleOf(meta.name);
-      if (title !== f.list.title) {
-        f.list.title = title;
-        f.list.renamed = true;
-        show(f);
+    }, function(status, code) {
+      f.saving = false;
+      if (status === undefined || status >= 500 || status === 401) {
+        // Not reached: kept, and tried again when back online or back to the page
+        var text = 'Could not save “' + f.list.title + '”.';
+        if (said !== text) {
+          said = text;
+          lastReason = '';
+          showFailure(text + ' It’ll be saved when the connection’s back.', status === 401 ? undefined : status);
+        }
+        return;
       }
-      if (meta.version === f.version) return done();
-      drive('GET', 'drive/v3/files/' + f.id + '?alt=media', null, function(doc) {
-        var theirs = tidy(doc), before = canon(f.doc);
-        f.doc = merge(f.doc, theirs);
-        f.version = meta.version;
-        var after = canon(f.doc);
-        if (after !== canon(theirs)) f.dirty = true; // they don't have something here yet
-        if (after !== before) {
-          f.stale = true;
-          show(f);
-        }
-        done();
-      }, failed);
-    }, failed);
-  }
-
-  function checkAll() {
-    if (!signedIn() || !auth.hasDrive() || document.hidden) return;
-    $.each(files, function(id, f) {
-      if (!f.doc || f.saving || f.gone) return;
-      if (f.dirty) return save(f);
-      fresh(f, function() {}, function(status) {
-        if (status === 404) lost(f);
-      });
+      if (op.insert && code === '23505') { // saved already, before a lost answer
+        f.queue.shift();
+        return pump(f);
+      }
+      // Refused: perhaps the list was deleted, or you were removed. Show it as it is.
+      f.queue = [];
+      lastReason = '';
+      showFailure('Could not save that change to “' + f.list.title + '”.', status);
+      fetchTasks(f, function() { f.stale = true; show(f); }, function() { start(); });
     });
-  }
-
-  setInterval(function() { checkAll(); }, self.poll);
-
-  // Show what others changed, unless that would get in the way: then try again soon.
-  function show(f) {
-    if (f.list.renamed) {
-      f.list.renamed = false;
-      showLists();
-    }
-    if (!f.stale) return;
-    var card = cardFor(f.list.id);
-    if (!card.length || !card[0].loaded) {
-      f.stale = false;
-      return;
-    }
-    if (reload(card)) f.stale = false;
-    else setTimeout(function() { show(f); }, 1000);
-  }
-
-  // The file was deleted, or is no longer shared with you.
-  function lost(f) {
-    if (f.gone) return;
-    f.gone = true;
-    lists = $.grep(lists, function(list) { return list.id !== f.list.id; });
-    showLists();
-    showMessage('“' + f.list.title + '” was deleted, or is no longer shared with you.', null, null, 8000);
-  }
-
-  function canon(doc) {
-    function sorted(o) {
-      return $.map(Object.keys(o).sort(), function(k) {
-        var v = o[k];
-        return [[k, typeof v === 'object' ? JSON.stringify(v, Object.keys(v).sort()) : v]];
-      });
-    }
-    return JSON.stringify([sorted(doc.tasks), sorted(doc.deleted)]);
-  }
-
-  // Theirs and ours together: the later change to each task, and every deletion
-  // since. A tie goes the same way on both sides.
-  function merge(ours, theirs) {
-    var out = tidy({}), cutoff = new Date(Date.now() - 60 * 864e5).toISOString();
-    $.each([ours.deleted, theirs.deleted], function(i, deleted) {
-      $.each(deleted, function(id, when) {
-        if (when > cutoff && when > (out.deleted[id] || '')) out.deleted[id] = when;
-      });
-    });
-    $.each([ours.tasks, theirs.tasks], function(i, tasks) {
-      $.each(tasks, function(id, task) {
-        var other = out.tasks[id];
-        if (other) {
-          var a = other.updated || '', b = task.updated || '';
-          if (b < a || (b === a && JSON.stringify(task) <= JSON.stringify(other))) return;
-        }
-        out.tasks[id] = task;
-      });
-    });
-    $.each(out.tasks, function(id, task) {
-      if (out.deleted[id] && out.deleted[id] >= (task.updated || '')) delete out.tasks[id];
-    });
-    return out;
   }
 
   function unsaved() {
-    return $.map(files, function(f) { return f.dirty || f.saving ? f : null; }).length > 0;
-  }
-
-  // As the page closes: save what hasn't been, without waiting to merge.
-  function flush() {
-    $.each(files, function(id, f) {
-      if (!f.doc || !(f.dirty || f.again)) return;
-      clearTimeout(f.timer);
-      drive('PATCH', 'upload/drive/v3/files/' + id + '?uploadType=media', JSON.stringify(f.doc), null, null, { type: TYPE, keepalive: true });
-    });
+    return $.map(known, function(f) { return f.queue.length ? f : null; }).length > 0;
   }
 
   // ---- Making, renaming and removing lists
 
-  function fileName(title) {
-    return title + SUFFIX;
-  }
-
-  // A new shared list in your Drive, with the given tasks (as Google Tasks has them).
-  // done(list), or failed(status).
+  // A new shared list, with the given tasks (as Google Tasks has them). done(list),
+  // or failed(status).
   function create(title, tasks, done, failed) {
-    var doc = tidy({}), ids = {}, when = now();
-    $.each(tasks || [], function(i, task) { ids[task.id] = newId(); });
-    $.each(tasks || [], function(i, task) {
-      var copy = { id: ids[task.id], title: task.title || '', status: task.status === 'completed' ? 'completed' : 'needsAction', position: task.position || '5', updated: when };
-      if (task.parent && ids[task.parent]) copy.parent = ids[task.parent];
-      $.each(['notes', 'due', 'completed'], function(j, key) { if (task[key]) copy[key] = task[key]; });
-      doc.tasks[copy.id] = copy;
+    if (!client()) return later(failed, 401);
+    whoAmI(function() {
+      answer(db.from('lists').insert({ title: title }).select('id,title,owner').single(), function(row) {
+        var f = know(row), ids = {}, rows = [];
+        f.tasks = {};
+        $.each(tasks || [], function(i, task) { ids[task.id] = newId(); });
+        $.each(tasks || [], function(i, task) {
+          var copy = { kind: 'tasks#task', id: ids[task.id], title: task.title || '', status: task.status === 'completed' ? 'completed' : 'needsAction', position: task.position || '5' };
+          if (task.parent && ids[task.parent]) copy.parent = ids[task.parent];
+          $.each(['notes', 'due', 'completed'], function(j, key) { if (task[key]) copy[key] = task[key]; });
+          f.tasks[copy.id] = copy;
+          rows.push($.extend({ list_id: f.id, id: copy.id }, rowOf(copy)));
+        });
+        listen(f);
+        if (!rows.length) return done(f.list);
+        answer(db.from('tasks').insert(rows), function() { done(f.list); }, function(status) {
+          answer(db.from('lists').delete().eq('id', f.id)); // not half a copy
+          f.gone = true;
+          failed(status);
+        });
+      }, failed);
     });
-    var meta = { name: fileName(title), mimeType: TYPE, appProperties: { tabandtick: 'list' } };
-    var b = 'tabandtick' + Math.random().toString(36).slice(2);
-    var body = '--' + b + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(meta) +
-      '\r\n--' + b + '\r\nContent-Type: ' + TYPE + '\r\n\r\n' + JSON.stringify(doc) + '\r\n--' + b + '--';
-    drive('POST', 'upload/drive/v3/files?uploadType=multipart&fields=' + encodeURIComponent(FIELDS), body, function(file) {
-      var f = know(file);
-      f.doc = doc;
-      f.version = file.version;
-      done(f.list);
-    }, failed, { type: 'multipart/related; boundary=' + b });
   }
 
   // A shared copy of a Google Tasks list, with its open tasks.
@@ -486,19 +490,20 @@ var driveLists = (function() {
   }
 
   function rename(id, title, done, failed) {
-    drive('PATCH', 'drive/v3/files/' + id + '?fields=' + encodeURIComponent(FIELDS), { name: fileName(title) }, function(meta) {
-      know(meta);
-      if (files[id].doc) files[id].version = null; // the version changed; look again next time
-      done(files[id].list);
+    if (!client()) return later(failed, 401);
+    answer(db.from('lists').update({ title: title }).eq('id', id).select('id,title,owner').single(), function(row) {
+      var f = know(row);
+      f.list.renamed = false;
+      done(f.list);
     }, failed);
   }
 
-  // Yours goes to the bin in your Drive, for everyone; one shared with you is left.
+  // Yours is deleted, for everyone; one shared with you is left.
   function remove(listId) {
     var f = entry(listId.slice(PREFIX.length)), list = f.list;
     ask(list.owned ? {
       title: 'Delete “' + list.title + '”?',
-      text: 'It’s deleted for everyone it’s shared with. You can get it back from the bin in Google Drive for 30 days.',
+      text: 'It’s deleted for everyone it’s shared with, and can’t be got back.',
       button: 'Delete', danger: true
     } : {
       title: 'Leave “' + list.title + '”?',
@@ -507,166 +512,54 @@ var driveLists = (function() {
     }, function() {
       function gone() {
         f.gone = true;
+        if (f.channel && db) db.removeChannel(f.channel);
+        f.channel = null;
         lists = $.grep(lists, function(other) { return other.id !== listId; });
         showLists();
         showMessage(list.owned ? 'List deleted.' : 'You’ve left “' + list.title + '”.', null, null, 4000);
       }
-      function failed(status) { showFailure('Could not ' + (list.owned ? 'delete' : 'leave') + ' that list.', status); }
-      if (list.owned) return drive('PATCH', 'drive/v3/files/' + f.id + '?fields=id', { trashed: true }, gone, failed);
-      whoAmI(function(permissionId) {
-        drive('DELETE', 'drive/v3/files/' + f.id + '/permissions/' + permissionId, null, gone, failed);
-      }, failed);
+      function failed(status) {
+        lastReason = '';
+        showFailure('Could not ' + (list.owned ? 'delete' : 'leave') + ' that list.', status);
+      }
+      if (!client()) return failed(401);
+      whoAmI(function(userId) {
+        answer(list.owned ? db.from('lists').delete().eq('id', f.id) :
+          db.from('list_members').delete().eq('list_id', f.id).eq('user_id', userId), gone, failed);
+      });
     });
-  }
-
-  function whoAmI(done, failed) {
-    if (me) return done(me);
-    drive('GET', 'drive/v3/about?fields=user(permissionId)', null, function(about) {
-      me = about.user.permissionId;
-      done(me);
-    }, failed);
   }
 
   // ---- Sharing
 
   function link(listId) {
     var page = location.protocol === 'chrome-extension:' ? 'https://tabandtick.github.io/app/' : location.origin + location.pathname;
-    return page + '#open=' + encodeURIComponent(listId.slice(PREFIX.length));
+    return page + '#list=' + encodeURIComponent(listId.slice(PREFIX.length));
   }
 
-  // Who has the list: done([{ id, name, email, role }]).
+  // Who's in the list: done([{ id, name, email, role, type, photo, pending }]).
   function people(listId, done, failed) {
-    drive('GET', 'drive/v3/files/' + listId.slice(PREFIX.length) + '/permissions?fields=' +
-      encodeURIComponent('permissions(id,type,role,emailAddress,displayName,photoLink)'), null, function(result) {
-      done($.map((result && result.permissions) || [], function(p) {
-        return { id: p.id, name: p.displayName || '', email: p.emailAddress || '', role: p.role, type: p.type, photo: p.photoLink || '' };
+    if (!client()) return later(failed, 401);
+    answer(db.rpc('list_people', { l: listId.slice(PREFIX.length) }), function(rows) {
+      done($.map(rows || [], function(p) {
+        return { id: p.email, name: p.name || '', email: p.email, role: p.role === 'owner' ? 'owner' : 'writer', type: 'user', photo: p.photo || '', pending: !p.joined };
       }));
     }, failed);
   }
 
-  // Drive emails them, with a note that has the link to open it here.
+  // Adds their email. They see the list when they next open Tab & Tick with it.
   function invite(listId, email, done, failed) {
-    var note = 'Open it in Tab & Tick: ' + link(listId);
-    drive('POST', 'drive/v3/files/' + listId.slice(PREFIX.length) + '/permissions?sendNotificationEmail=true&emailMessage=' + encodeURIComponent(note),
-      { type: 'user', role: 'writer', emailAddress: email }, done, failed);
+    if (!client()) return later(failed, 401);
+    answer(db.from('list_members').insert({ list_id: listId.slice(PREFIX.length), email: email.toLowerCase() }), done, function(status, code) {
+      if (code === '23505') return done(); // invited already
+      failed(status);
+    });
   }
 
-  function uninvite(listId, permissionId, done, failed) {
-    drive('DELETE', 'drive/v3/files/' + listId.slice(PREFIX.length) + '/permissions/' + permissionId, null, done, failed);
+  function uninvite(listId, email, done, failed) {
+    if (!client()) return later(failed, 401);
+    answer(db.from('list_members').delete().eq('list_id', listId.slice(PREFIX.length)).eq('email', email), done, failed);
   }
 
-  // ---- Opening a list someone shared with you
-
-  // done(list) once it's yours to open, or failed(status). Drive only lets an app
-  // open a file shared with you once you've picked it, so a 404 means pick().
-  function open(id, done, failed) {
-    var f = entry(id);
-    if (f.doc && !f.gone) return done(f.list);
-    drive('GET', 'drive/v3/files/' + id + '?fields=' + encodeURIComponent(FIELDS), null, function(meta) {
-      know(meta);
-      done(f.list);
-    }, failed);
-  }
-
-  // In the extension, Google's file picker can't be loaded, so the website opens it.
-  // The access it gives is to Tab & Tick, so the extension can then open the list too.
-  function pickOnWebsite(id) {
-    window.open('https://tabandtick.github.io/app/#' + (id ? 'open=' + encodeURIComponent(id) : 'pick'), '_blank');
-    showMessage('Open it on the website, then come back: it’ll be here too.', null, null, 10000);
-  }
-
-  var pickerReady = null; // waiting callers, then true
-
-  // Google's file picker, showing just this file if given: done(file id) once picked.
-  function pick(id, done) {
-    if (location.protocol === 'chrome-extension:') return pickOnWebsite(id);
-    if (!PICKER_KEY) return showMessage('Opening shared lists isn’t set up here yet.', null, null, 6000);
-    if (pickerReady === true) return picker(id, done);
-    if (pickerReady) return pickerReady.push(function() { picker(id, done); });
-    pickerReady = [function() { picker(id, done); }];
-    var script = document.createElement('script');
-    script.src = 'https://apis.google.com/js/api.js';
-    script.onload = function() {
-      gapi.load('picker', function() {
-        var waiting = pickerReady;
-        pickerReady = true;
-        $.each(waiting, function(i, f) { f(); });
-      });
-    };
-    script.onerror = function() {
-      pickerReady = null;
-      showMessage('Google’s file picker couldn’t load. Check your connection.', null, null, 6000);
-    };
-    document.head.appendChild(script);
-  }
-
-  function picker(id, done) {
-    var view = new google.picker.DocsView(google.picker.ViewId.DOCS).setMimeTypes(TYPE).setMode(google.picker.DocsViewMode.LIST);
-    if (id) view.setFileIds(id);
-    new google.picker.PickerBuilder()
-      .addView(view)
-      .setOAuthToken(auth.token())
-      .setDeveloperKey(PICKER_KEY)
-      .setAppId(APP_ID)
-      .setTitle('Open a shared list')
-      .setCallback(function(data) {
-        if (data.action !== google.picker.Action.PICKED) return;
-        done(data.docs[0].id);
-      })
-      .build()
-      .setVisible(true);
-  }
-
-  return self;
-})();
-
-// The app's way to shared lists, wherever each is kept.
-var shared = (function() {
-  function by(listId) {
-    return cloudLists.isCloud(listId) ? cloudLists : driveLists;
-  }
-  function both(name) {
-    return function() {
-      driveLists[name].apply(null, arguments);
-      return cloudLists[name].apply(null, arguments);
-    };
-  }
-  // New lists go to Tab & Tick's server when it can be used, as it's quicker and
-  // needs no Drive; if not, to Drive.
-  function maker() {
-    return cloudLists.available() ? cloudLists : driveLists;
-  }
-  var self = {
-    isShared: function(list) { return driveLists.isShared(list) || cloudLists.isCloud(list); },
-    inCloud: function() { return cloudLists.available(); },
-    request: function(method, path, body, done, failed) {
-      return (/^(users\/@me\/)?lists\/cloud%3A/.test(path) ? cloudLists : driveLists).request(method, path, body, done, failed);
-    },
-    lists: function() { return driveLists.lists().concat(cloudLists.lists()); },
-    start: function(done) {
-      var waiting = 2;
-      function one() { if (--waiting === 0 && done) done(); }
-      driveLists.start(one);
-      cloudLists.start(one);
-    },
-    create: function(title, tasks, done, failed) { maker().create(title, tasks, done, failed); },
-    copy: function(list, done, failed) { maker().copy(list, done, failed); },
-    remove: function(listId) { by(listId).remove(listId); },
-    move: driveLists.move, // works for both, through send()
-    unsaved: function() { return driveLists.unsaved() || cloudLists.unsaved(); },
-    flush: both('flush'),
-    check: both('check'),
-    reset: both('reset'),
-    link: function(listId) { return by(listId).link(listId); },
-    people: function(listId, done, failed) { by(listId).people(listId, done, failed); },
-    invite: function(listId, email, done, failed) { by(listId).invite(listId, email, done, failed); },
-    uninvite: function(listId, who, done, failed) { by(listId).uninvite(listId, who, done, failed); },
-    hasCloud: function(id) { return cloudLists.has(id); },
-    open: driveLists.open,
-    pick: driveLists.pick,
-    merge: driveLists.merge,
-    between: driveLists.between
-  };
-  Object.defineProperty(self, 'base', { get: function() { return driveLists.base; }, set: function(v) { driveLists.base = v; } });
   return self;
 })();
