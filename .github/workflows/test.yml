@@ -20,7 +20,7 @@ jobs:
       # A local Tab & Tick server, with just what shared lists use
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 3.4.0
       - name: Start the local server
         run: supabase start -x studio,storage-api,imgproxy,edge-runtime,logflare,vector,mailpit,supavisor,postgres-meta
       - name: Check its rules
