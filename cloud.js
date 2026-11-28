@@ -1,12 +1,14 @@
 // Tab & Tick Cloud (Supabase), which keeps the website signed in. It keeps each Google
 // account's refresh token, so a fresh hour-long Google token can be had without
-// Google's window. Your tasks never go through it: they go between your browser and
-// Google, as before. See supabase/ for its functions and table.
+// Google's window. Your Google Tasks never go through it: they go between your browser
+// and Google, as before. Lists you share are kept on it: see cloudlists.js. See
+// supabase/ for its functions and tables.
 //
 //   signIn(code, done)    after Google's window: done(answer, email) or done(null, reason)
 //   token(email, done)    a fresh Google token: done(answer) or done(null, reason)
 //   has(email)            whether that account has a Tab & Tick session here
 //   signOut(email)        forget it, here and on the server
+//   db(email)             the Supabase client for that account, for shared lists
 // An answer is Google's { access_token, expires_in, scope }.
 
 var cloud = (function() {
@@ -74,6 +76,8 @@ var cloud = (function() {
         });
       });
     },
+
+    db: client,
 
     has: function(email) {
       try { return !!(email && localStorage.getItem(storageKey(email))); } catch (e) { return false; }

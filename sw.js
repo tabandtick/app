@@ -2,7 +2,7 @@
 // kept; when the network fails, the kept copy is used. Nothing else is touched: your
 // tasks go to and from Google as before, and aren't kept here.
 var CACHE = 'tabandtick-app';
-var FILES = ['./', 'index.html', 'style.css', 'jquery.js', 'auth.js', 'script.js', 'tasks.js', 'shared.js',
+var FILES = ['./', 'index.html', 'style.css', 'jquery.js', 'auth.js', 'script.js', 'tasks.js', 'cloudlists.js', 'shared.js',
   'app.webmanifest', 'icons/logo.svg', 'icons/icon-32.png', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', function(event) {
