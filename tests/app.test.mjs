@@ -828,6 +828,11 @@ await touch('touchEnd'); await wait(200);
 check('dragging by the handle with a finger moves the task', (await s()).order, before.join(' '));
 await cdp('Emulation.setTouchEmulationEnabled', { enabled: false });
 
+// ---- The line under a task with a date or notes is shown as the list loads
+await reset([{ id: 'm1', title: 'Dated', position: '1', due: dayIso(1) }, { id: 'm2', title: 'Noted', position: '2', notes: 'Some notes' }, { id: 'm3', title: 'Plain', position: '3' }]);
+check('a task’s date or notes show under it when the list loads', await js(`$('.claire li').map(function() { var m = $(this).children('.meta'); return $(this).children('.todo').val() + ':' + (m.is(':visible') ? m.text() : 'hidden'); }).get()`),
+  ['Dated:Tomorrow', 'Noted:Some notes', 'Plain:hidden']);
+
 // ---- Dates typed at the end of a title, read as you leave it
 check('dates at the end of a title are read, from Thursday 26 November 2026', await js(`(function() {
   var now = new Date(2026, 10, 26, 15, 0);

@@ -37,8 +37,11 @@ var selected = $();
 var tabbing = false;
 
 // The card last used, for the Create button.
+// The list a new task goes in: the one being edited, or on a phone the one shown.
 function currentCard() {
-	var card = selected.closest('.card');
+	var card = selected.closest('.card:visible');
+	if (card.length) return card;
+	card = $('#cards .card.current:visible');
 	return card.length ? card : $('#cards .card').first();
 }
 
@@ -873,6 +876,9 @@ $(document).ready(function() {
 		newTask(currentCard());
 	});
 	$('#new-list').click(askNewList);
+	$('#list-tabs').on('click', '.tab[data-list]', function() { chooseTab($(this).attr('data-list')); })
+		.on('click', '.new-list-tab', askNewList);
+	$('#fab').click(function() { newTask(currentCard()); });
 	$('#new-shared').click(askSharedList);
 	$('#open-shared').click(pickShared);
 	$('#dialog .cancel').click(function() { $('#dialog')[0].close(); });
