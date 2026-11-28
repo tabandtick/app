@@ -880,7 +880,6 @@ $(document).ready(function() {
 		.on('click', '.new-list-tab', askNewList);
 	$('#fab').click(function() { newTask(currentCard()); });
 	$('#new-shared').click(askSharedList);
-	$('#open-shared').click(pickShared);
 	$('#dialog .cancel').click(function() { $('#dialog')[0].close(); });
 	$('#shortcuts .close').click(function() { $('#shortcuts')[0].close(); });
 	var searchTimer;

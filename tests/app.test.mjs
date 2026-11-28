@@ -1025,7 +1025,7 @@ await js(`window.windows = 0; window.choose = ''; window.sessions = {}; window.r
 await wait(400);
 const accountsNow = () => js(`({ lists: $('#lists .name').map(function() { return this.textContent; }).get().join(), others: $('#other-accounts .other-account').map(function() { return $(this).attr('data-email'); }).get(), me: $('#account-email').text(), all: accounts().map(function(a) { return a.email; }) })`);
 check('logged in as one account', await accountsNow(), { lists: 'alex’s list', others: [], me: 'alex@example.com', all: ['alex@example.com'] });
-check('logging in keeps what you agreed to before, such as Drive for shared lists', await js('lastConfig.include_granted_scopes'), true);
+check('logging in keeps what you agreed to before', await js('lastConfig.include_granted_scopes'), true);
 check('the sign-in is kept, so closing the tab doesn’t log you out', await js(`JSON.parse(localStorage.getItem('tabandtick-token')).token`), 'token-alex@example.com');
 await js(`window.expiredAt = windows; auth.expired(function() {}); true`);
 await wait(100);
@@ -1123,9 +1123,6 @@ await wait(200);
 check('...unless that account is no longer signed in to Google in Chrome', [await js('renewed2'), await js('flows')], [false, ['none work@example.com']]);
 await js(`googleSession = true; switchAccount('main@example.com'); true`);
 await wait(400);
-await js(`chromeCalls = []; auth.drive(function(ok) { window.drove = ok; }); true`);
-await wait(200);
-check('Drive, for shared lists, is asked of Chrome for its account', [await js('drove'), await js('chromeCalls'), await js('auth.hasDrive()')], [true, ['ask 4'], true]);
 await cdp('Page.removeScriptToEvaluateOnNewDocument', { identifier: fakeChrome.result.identifier });
 
 // ---- Without a connection: the website opens from its kept files, and says it's offline

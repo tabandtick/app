@@ -96,7 +96,7 @@ function shouldRetry(method, answer) {
 // and it waits its turn when there have been too many requests.
 function send(method, path, body, done, failed, again, tries) {
   var started = session;
-  if (/^(users\/@me\/)?lists\/(drive|cloud)%3A/.test(path)) { // a shared list: see shared.js
+  if (/^(users\/@me\/)?lists\/cloud%3A/.test(path)) { // a shared list: see shared.js
     return shared.request(method, path, body, function(result) {
       if (started === session && done) done(result);
     }, function(status) {
@@ -427,28 +427,19 @@ function deleteList(id) {
 }
 
 // ---- Sharing. Google Tasks can't share lists, so shared ones are kept on Tab &
-// Tick's server, or in Google Drive: see shared.js.
+// Tick's server: see shared.js.
 
 var PEOPLE = '<svg class="shared-icon" width="18" height="18" viewBox="0 0 20 20"><circle cx="7.5" cy="7" r="3" fill="currentColor"/><path d="M1.5 16.5c.6-3 3-4.6 6-4.6s5.4 1.6 6 4.6z" fill="currentColor"/><circle cx="14" cy="7.5" r="2.4" fill="currentColor" opacity=".7"/><path d="M14.6 11.4c2 .3 3.5 1.8 3.9 4.1h-3.3c-.3-1.6-1-3-2.2-3.9.5-.1 1-.2 1.6-.2z" fill="currentColor" opacity=".7"/></svg>';
 
-// Drive's permission is asked for only when you first share, as it isn't needed
-// before. Google's window needs a click, which this is called from.
-function withDrive(then) {
-  if (auth.hasDrive()) return then();
-  auth.drive(function(ok, reason) {
-    if (!ok) return showMessage('Shared lists need Google Drive' + (reason ? ' (' + reason + ').' : '.'), null, null, 8000);
-    startShared();
-    then();
-  });
-}
-
-// A new shared list goes to Tab & Tick's server, which needs no Drive. In the
-// extension, a session with it may need Google's page first; failing that, Drive.
+// Shared lists need a session with Tab & Tick's server. The website gets one on
+// logging in, so one logged in before it existed logs in again; the extension asks
+// Google's page, which this click can open.
 function forNewShared(then) {
   if (shared.inCloud()) return then();
-  if (!auth.cloudSession) return withDrive(then);
+  function again() { showMessage('To share lists, log in again.', 'Log in', handleAuthClick); }
+  if (!auth.cloudSession) return again();
   auth.cloudSession(currentAccount(), true, function(ok) {
-    if (!ok) return withDrive(then);
+    if (!ok) return showMessage('Couldn’t connect to Tab & Tick’s server to share lists. Try again later.', null, null, 8000);
     startShared();
     then();
   });
@@ -456,7 +447,7 @@ function forNewShared(then) {
 
 function askSharedList() {
   forNewShared(function() {
-    ask({ title: 'New shared list', text: 'Share it with anyone with a Google account.' + (shared.inCloud() ? '' : ' It’s kept in your Google Drive.'), field: '', placeholder: 'List name', button: 'Create' }, function(title) {
+    ask({ title: 'New shared list', text: 'Share it with anyone with a Google account.', field: '', placeholder: 'List name', button: 'Create' }, function(title) {
       shared.create(title, [], function(list) {
         addShared(list);
         shareList(list.id);
@@ -480,7 +471,7 @@ function offerCopy(id) {
   if (!list) return;
   ask({
     title: 'Share “' + list.title + '”?',
-    text: 'Google Tasks can’t share lists, so this makes a shared copy of it, with its open tasks' + (shared.inCloud() ? '' : ', in your Google Drive') + '. The original stays in Google Tasks.',
+    text: 'Google Tasks can’t share lists, so this makes a shared copy of it, with its open tasks. The original stays in Google Tasks.',
     button: 'Make a shared copy'
   }, function() {
     forNewShared(function() {
@@ -503,9 +494,7 @@ function shareList(id) {
   if (!list.shared) return offerCopy(id);
   closeMenu();
   dialog.find('h2').text('Share “' + list.title + '”');
-  dialog.find('.share-note').text(list.cloud ?
-    'People you add can see and change this list in Tab & Tick. Send them the link: it opens once they log in with that Google account.' :
-    'People you add can see and change this list in Tab & Tick. Google Drive emails them a link to it.');
+  dialog.find('.share-note').text('People you add can see and change this list in Tab & Tick. Send them the link: it opens once they log in with that Google account.');
   field.val('').prop('disabled', list.canShare === false);
   dialog.find('.share-add button').prop('disabled', true);
   function showPeople() {
@@ -539,8 +528,8 @@ function shareList(id) {
       field.val('');
       showPeople();
       announce('Shared with ' + email + '.');
-      // Nothing is emailed for a list on the server: you send them the link
-      if (list.cloud) showMessage('Shared with ' + email + '. Send them the link so they know.', 'Copy link', function() { copyLink(id); }, 12000);
+      // Nothing is emailed: you send them the link
+      showMessage('Shared with ' + email + '. Send them the link so they know.', 'Copy link', function() { copyLink(id); }, 12000);
     }, function(status) {
       dialog.find('.share-add button').prop('disabled', false);
       if (status === 400) showMessage('Could not share with ' + email + '. Check it’s a Google account.', null, null, 8000);
@@ -588,62 +577,25 @@ function showSharers(card, who) {
     .append(more > 0 ? $('<span class="face more-people" aria-hidden="true"></span>').text('+' + more) : null);
 }
 
-// A link to a shared list: tabandtick.github.io/app/#list=<its id> for one on the
-// server, #open=<its file> for one in Drive. Kept until you're logged in, then opened.
-// #pick, from the extension, which can't show Google's file picker itself, opens that.
+// A link to a shared list: tabandtick.github.io/app/#list=<its id>. Kept until you're
+// logged in, then opened.
 var linkToOpen = (function() {
-  var m = location.hash.match(/^#(?:open=([\w-]+)|(pick)|list=([\w-]+))$/);
+  var m = location.hash.match(/^#list=([\w-]+)$/);
   if (!m) return null;
   history.replaceState(null, '', location.pathname + location.search);
-  return m[3] ? 'cloud:' + m[3] : m[1] || 'pick';
+  return 'cloud:' + m[1];
 })();
 
+// You're in a list if it was shared with this account's email: shared.start() has
+// joined it already.
 function openLink() {
   var id = linkToOpen;
   if (!id || !tasksLoaded) return;
   linkToOpen = null;
-  if (!auth.canShare) return showMessage('Shared lists open on the website: tabandtick.github.io/app', null, null, 10000);
-  if (id.indexOf('cloud:') === 0) return openCloud(id);
-  if (id === 'pick') {
-    return ask({ title: 'Open a list shared with you?', text: 'Google asks you to pick it once, to let Tab & Tick open it. It then opens in the extension too.', button: 'Choose' }, pickShared);
-  }
-  var known = findList('drive:' + id);
-  if (known) return showOpened(known);
-  ask({ title: 'Open a shared list?', text: 'Someone shared a list with you. To open it, Tab & Tick asks Google for the files you open with it in Google Drive.', button: 'Open it' }, function() {
-    withDrive(function() { openShared(id); });
-  });
-}
-
-// A list on the server opens once you're in it, which you are if it was shared with
-// this account's email: shared.start() has joined it already.
-function openCloud(id) {
   var known = findList(id);
   if (known) return showOpened(known);
-  var email = currentAccount();
-  if (!shared.inCloud()) return showMessage('Log in again to open that list.', 'Log in', handleAuthClick);
-  ask({ title: 'This list isn’t shared with ' + email, text: 'Ask whoever sent the link to share it with this account, or switch to the account they shared it with.', button: 'Switch account' }, function() { $('#account-button').click(); });
-}
-
-function openShared(id) {
-  shared.open(id, function(list) {
-    addShared(list);
-    showOpened(list);
-  }, function(status) {
-    if (status !== 404 && status !== 403) return showFailure('Could not open that list.', status);
-    // Drive lets an app open a file shared with you once you've picked it
-    shared.pick(id, function(picked) {
-      shared.open(picked, function(list) {
-        addShared(list);
-        showOpened(list);
-      }, function(status) { showFailure('Could not open that list.', status); });
-    });
-  });
-}
-
-function pickShared() {
-  withDrive(function() {
-    shared.pick(null, openShared);
-  });
+  if (!shared.inCloud()) return showMessage('To open shared lists, log in again.', 'Log in', handleAuthClick);
+  ask({ title: 'This list isn’t shared with ' + currentAccount(), text: 'Ask whoever sent the link to share it with this account, or switch to the account they shared it with.', button: 'Switch account' }, function() { $('#account-button').click(); });
 }
 
 function showOpened(list) {

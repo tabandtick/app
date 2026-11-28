@@ -548,17 +548,7 @@ body:not(.can-share) .share-only {
   text-align: left;
 }
 
-#open-shared {
-  width: 100%;
-  padding: 8px 8px 8px 46px;
-  border-radius: 8px;
-  color: var(--muted);
-  font-size: 13px;
-  text-align: left;
-}
-
-#new-shared:hover,
-#open-shared:hover {
+#new-shared:hover {
   background: var(--hover);
 }
 
