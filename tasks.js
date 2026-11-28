@@ -96,7 +96,7 @@ function shouldRetry(method, answer) {
 // and it waits its turn when there have been too many requests.
 function send(method, path, body, done, failed, again, tries) {
   var started = session;
-  if (/^(users\/@me\/)?lists\/drive%3A/.test(path)) { // a shared list, kept in Drive
+  if (/^(users\/@me\/)?lists\/(drive|cloud)%3A/.test(path)) { // a shared list: see shared.js
     return shared.request(method, path, body, function(result) {
       if (started === session && done) done(result);
     }, function(status) {
@@ -426,15 +426,15 @@ function deleteList(id) {
   });
 }
 
-// ---- Sharing. Google Tasks can't share lists, so shared ones are kept in Google
-// Drive: see shared.js.
+// ---- Sharing. Google Tasks can't share lists, so shared ones are kept on Tab &
+// Tick's server, or in Google Drive: see shared.js.
 
 var PEOPLE = '<svg class="shared-icon" width="18" height="18" viewBox="0 0 20 20"><circle cx="7.5" cy="7" r="3" fill="currentColor"/><path d="M1.5 16.5c.6-3 3-4.6 6-4.6s5.4 1.6 6 4.6z" fill="currentColor"/><circle cx="14" cy="7.5" r="2.4" fill="currentColor" opacity=".7"/><path d="M14.6 11.4c2 .3 3.5 1.8 3.9 4.1h-3.3c-.3-1.6-1-3-2.2-3.9.5-.1 1-.2 1.6-.2z" fill="currentColor" opacity=".7"/></svg>';
 
 // Drive's permission is asked for only when you first share, as it isn't needed
 // before. Google's window needs a click, which this is called from.
 function withDrive(then) {
-  if (auth.hasDrive()) return then();
+  if (auth.hasDrive() || shared.inCloud()) return then(); // the server needs no Drive
   auth.drive(function(ok, reason) {
     if (!ok) return showMessage('Shared lists need Google Drive' + (reason ? ' (' + reason + ').' : '.'), null, null, 8000);
     startShared();
@@ -444,7 +444,7 @@ function withDrive(then) {
 
 function askSharedList() {
   withDrive(function() {
-    ask({ title: 'New shared list', text: 'Share it with anyone with a Google account. It’s kept in your Google Drive.', field: '', placeholder: 'List name', button: 'Create' }, function(title) {
+    ask({ title: 'New shared list', text: 'Share it with anyone with a Google account.' + (shared.inCloud() ? '' : ' It’s kept in your Google Drive.'), field: '', placeholder: 'List name', button: 'Create' }, function(title) {
       shared.create(title, [], function(list) {
         addShared(list);
         shareList(list.id);
@@ -468,7 +468,7 @@ function offerCopy(id) {
   if (!list) return;
   ask({
     title: 'Share “' + list.title + '”?',
-    text: 'Google Tasks can’t share lists, so this makes a shared copy of it, with its open tasks, in your Google Drive. The original stays in Google Tasks.',
+    text: 'Google Tasks can’t share lists, so this makes a shared copy of it, with its open tasks' + (shared.inCloud() ? '' : ', in your Google Drive') + '. The original stays in Google Tasks.',
     button: 'Make a shared copy'
   }, function() {
     withDrive(function() {
@@ -491,6 +491,9 @@ function shareList(id) {
   if (!list.shared) return offerCopy(id);
   closeMenu();
   dialog.find('h2').text('Share “' + list.title + '”');
+  dialog.find('.share-note').text(list.cloud ?
+    'People you add can see and change this list in Tab & Tick. Send them the link: it opens once they log in with that Google account.' :
+    'People you add can see and change this list in Tab & Tick. Google Drive emails them a link to it.');
   field.val('').prop('disabled', list.canShare === false);
   dialog.find('.share-add button').prop('disabled', true);
   function showPeople() {
@@ -499,6 +502,7 @@ function shareList(id) {
       people.empty().append($.map(all, function(p) {
         var row = $('<li></li>').append(face(p, 36), $('<span class="who"></span>').append(
           $('<span class="name"></span>').text(p.name || p.email),
+          p.pending ? $('<span class="email"></span>').text('Hasn’t opened it yet') :
           p.name && p.email ? $('<span class="email"></span>').text(p.email) : null));
         if (p.role === 'owner') row.append($('<span class="role"></span>').text('Owner'));
         else if (list.owned && p.type === 'user') row.append($('<button type="button" class="unshare"></button>').attr('aria-label', 'Stop sharing with ' + (p.name || p.email)).html('&times;').click(function() {
@@ -523,25 +527,29 @@ function shareList(id) {
       field.val('');
       showPeople();
       announce('Shared with ' + email + '.');
+      // Nothing is emailed for a list on the server: you send them the link
+      if (list.cloud) showMessage('Shared with ' + email + '. Send them the link so they know.', 'Copy link', function() { copyLink(id); }, 12000);
     }, function(status) {
       dialog.find('.share-add button').prop('disabled', false);
       if (status === 400) showMessage('Could not share with ' + email + '. Check it’s a Google account.', null, null, 8000);
       else showFailure('Could not share that list.', status);
     });
   });
-  dialog.find('.copy-link').off('click').on('click', function() {
-    var button = $(this);
-    navigator.clipboard.writeText(shared.link(id)).then(function() {
-      button.text('Link copied');
-      setTimeout(function() { button.text('Copy link'); }, 2000);
-    }, function() {
-      showMessage(shared.link(id), null, null, 15000);
-    });
-  });
+  dialog.find('.copy-link').off('click').on('click', function() { copyLink(id, $(this)); });
   dialog.find('.close').off('click').on('click', function() { dialog[0].close(); });
   showPeople();
   dialog[0].showModal();
   if (!field.prop('disabled')) field.focus();
+}
+
+function copyLink(id, button) {
+  navigator.clipboard.writeText(shared.link(id)).then(function() {
+    if (!button) return showMessage('Link copied.', null, null, 3000);
+    button.text('Link copied');
+    setTimeout(function() { button.text('Copy link'); }, 2000);
+  }, function() {
+    showMessage(shared.link(id), null, null, 15000);
+  });
 }
 
 // A person's Google picture, or their initial if there's none or it won't load.
@@ -568,14 +576,14 @@ function showSharers(card, who) {
     .append(more > 0 ? $('<span class="face more-people" aria-hidden="true"></span>').text('+' + more) : null);
 }
 
-// A link to a shared list: tabandtick.github.io/app/#open=<its file>. Kept until
-// you're logged in, then opened.
+// A link to a shared list: tabandtick.github.io/app/#list=<its id> for one on the
+// server, #open=<its file> for one in Drive. Kept until you're logged in, then opened.
 // #pick, from the extension, which can't show Google's file picker itself, opens that.
 var linkToOpen = (function() {
-  var m = location.hash.match(/^#(?:open=([\w-]+)|(pick))$/);
+  var m = location.hash.match(/^#(?:open=([\w-]+)|(pick)|list=([\w-]+))$/);
   if (!m) return null;
   history.replaceState(null, '', location.pathname + location.search);
-  return m[1] || 'pick';
+  return m[3] ? 'cloud:' + m[3] : m[1] || 'pick';
 })();
 
 function openLink() {
@@ -583,6 +591,7 @@ function openLink() {
   if (!id || !tasksLoaded) return;
   linkToOpen = null;
   if (!auth.canShare) return showMessage('Shared lists open on the website: tabandtick.github.io/app', null, null, 10000);
+  if (id.indexOf('cloud:') === 0) return openCloud(id);
   if (id === 'pick') {
     return ask({ title: 'Open a list shared with you?', text: 'Google asks you to pick it once, to let Tab & Tick open it. It then opens in the extension too.', button: 'Choose' }, pickShared);
   }
@@ -591,6 +600,16 @@ function openLink() {
   ask({ title: 'Open a shared list?', text: 'Someone shared a list with you. To open it, Tab & Tick asks Google for the files you open with it in Google Drive.', button: 'Open it' }, function() {
     withDrive(function() { openShared(id); });
   });
+}
+
+// A list on the server opens once you're in it, which you are if it was shared with
+// this account's email: shared.start() has joined it already.
+function openCloud(id) {
+  var known = findList(id);
+  if (known) return showOpened(known);
+  var email = currentAccount();
+  if (!shared.inCloud()) return showMessage('Log in again to open that list.', 'Log in', handleAuthClick);
+  ask({ title: 'This list isn’t shared with ' + email, text: 'Ask whoever sent the link to share it with this account, or switch to the account they shared it with.', button: 'Switch account' }, function() { $('#account-button').click(); });
 }
 
 function openShared(id) {

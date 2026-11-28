@@ -1,5 +1,9 @@
 // Shared lists. Google Tasks can't share a list with another account, so a shared
-// list is kept in a file in Google Drive instead, and Drive shares it as it would any
+// list is kept elsewhere: new ones on Tab & Tick's server (cloudlists.js), and older
+// ones, or ones made where the server can't be used, in Google Drive. `shared`, at the
+// end, hands each request to the right one.
+//
+// Drive lists: kept in a file in Google Drive, and Drive shares it as it would any
 // file. To the rest of the app it is one more list: send() hands its requests here,
 // and they are answered as Google Tasks would answer them, from a copy of the file
 // kept in the page. The file is saved soon after each change, and checked every few
@@ -10,7 +14,7 @@
 //   { app: 'Tab & Tick', format: 1, tasks: { id: task }, deleted: { id: when } }
 // where each task is as Google Tasks has it, with `updated` saying when it changed.
 
-var shared = (function() {
+var driveLists = (function() {
   var PREFIX = 'drive:';
   var TYPE = 'application/vnd.tabandtick.list+json';
   var SUFFIX = ' (Tab & Tick)';
@@ -613,5 +617,56 @@ var shared = (function() {
       .setVisible(true);
   }
 
+  return self;
+})();
+
+// The app's way to shared lists, wherever each is kept.
+var shared = (function() {
+  function by(listId) {
+    return cloudLists.isCloud(listId) ? cloudLists : driveLists;
+  }
+  function both(name) {
+    return function() {
+      driveLists[name].apply(null, arguments);
+      return cloudLists[name].apply(null, arguments);
+    };
+  }
+  // New lists go to Tab & Tick's server when it can be used, as it's quicker and
+  // needs no Drive; if not, to Drive.
+  function maker() {
+    return cloudLists.available() ? cloudLists : driveLists;
+  }
+  var self = {
+    isShared: function(list) { return driveLists.isShared(list) || cloudLists.isCloud(list); },
+    inCloud: function() { return cloudLists.available(); },
+    request: function(method, path, body, done, failed) {
+      return (/^(users\/@me\/)?lists\/cloud%3A/.test(path) ? cloudLists : driveLists).request(method, path, body, done, failed);
+    },
+    lists: function() { return driveLists.lists().concat(cloudLists.lists()); },
+    start: function(done) {
+      var waiting = 2;
+      function one() { if (--waiting === 0 && done) done(); }
+      driveLists.start(one);
+      cloudLists.start(one);
+    },
+    create: function(title, tasks, done, failed) { maker().create(title, tasks, done, failed); },
+    copy: function(list, done, failed) { maker().copy(list, done, failed); },
+    remove: function(listId) { by(listId).remove(listId); },
+    move: driveLists.move, // works for both, through send()
+    unsaved: function() { return driveLists.unsaved() || cloudLists.unsaved(); },
+    flush: both('flush'),
+    check: both('check'),
+    reset: both('reset'),
+    link: function(listId) { return by(listId).link(listId); },
+    people: function(listId, done, failed) { by(listId).people(listId, done, failed); },
+    invite: function(listId, email, done, failed) { by(listId).invite(listId, email, done, failed); },
+    uninvite: function(listId, who, done, failed) { by(listId).uninvite(listId, who, done, failed); },
+    hasCloud: function(id) { return cloudLists.has(id); },
+    open: driveLists.open,
+    pick: driveLists.pick,
+    merge: driveLists.merge,
+    between: driveLists.between
+  };
+  Object.defineProperty(self, 'base', { get: function() { return driveLists.base; }, set: function(v) { driveLists.base = v; } });
   return self;
 })();

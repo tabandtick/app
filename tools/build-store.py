@@ -14,7 +14,7 @@ from pathlib import Path
 CLIENT_ID = '719894949389-d5vjqvhj7iv0du78j9ml0cf8s783niso.apps.googleusercontent.com'
 
 ROOT = Path(__file__).resolve().parent.parent
-FILES = ['index.html', 'style.css', 'jquery.js', 'script.js', 'tasks.js', 'shared.js',
+FILES = ['index.html', 'style.css', 'jquery.js', 'script.js', 'tasks.js', 'cloudlists.js', 'shared.js',
          'icons/logo.svg', 'icons/LICENSE-material-symbols.txt', 'icons/icon-16.png', 'icons/icon-32.png', 'icons/icon-48.png', 'icons/icon-128.png',
          'app.webmanifest', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png']
 
