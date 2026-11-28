@@ -646,6 +646,17 @@ check('Move to Other takes both, last first', [(await s()).order, await js('sent
   ['Charlie -Sub Delta', ['lists/L1/tasks/b/move?destinationTasklist=L2', 'lists/L1/tasks/a/move?destinationTasklist=L2']]);
 check('message', await js(`$('#message').text()`), 'Moved 2 tasks to Other. Undo');
 
+// A task with subtasks takes them with it, each under it in the other list, as in Google Tasks
+await js(`$('#message').hide(); true`);
+await wait(300);
+await reset([{ id: 'p1', title: 'Party', position: '1' }, { id: 'k1', title: 'Cake', parent: 'p1', position: '1' },
+  { id: 'k2', title: 'Balloons', parent: 'p1', position: '2' }, { id: 'p2', title: 'Rest', position: '2' }]);
+await js(`sent = []; moveToList($(${rowOf('Party')}).children('.todo'), 'L2'); true`);
+await wait(400);
+check('moving a task with subtasks to another list takes them too, in order, under it', [(await s()).order, await js('sent')],
+  ['Rest', ['lists/L1/tasks/p1/move?destinationTasklist=L2', 'lists/L1/tasks/k1/move?destinationTasklist=L2&parent=p1', 'lists/L1/tasks/k2/move?destinationTasklist=L2&parent=p1&previous=k1']]);
+check('...and says so', await js(`$('#message').text()`), 'Moved to Other. Undo');
+
 // ---- Dragging does what Tab and Shift+Tab do with subtasks
 
 await reset([{ id: 'g1', title: 'Ann', position: '1' }, { id: 'g2', title: 'Ben', position: '2' },

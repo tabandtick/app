@@ -54,7 +54,7 @@ function fake(req, res, path, body) {
   if (!m || (m[1] && !task)) return json(404, { error: { code: 404, message: 'Not found' } });
   if (req.method === 'GET' && !m[1]) return json(200, { items: tasks.filter(t => q.get('showCompleted') !== 'false' || t.status !== 'completed') });
   if (req.method === 'GET') return json(200, task);
-  if (req.method === 'POST') { const t = { id: 'g' + (++made + 100), position: '0', status: 'needsAction', ...JSON.parse(body || '{}') }; tasks.unshift(t); return json(200, t); }
+  if (req.method === 'POST') { const t = { id: 'g' + (++made + 100), position: '0', status: 'needsAction', ...JSON.parse(body || '{}') }; if (q.get('parent')) t.parent = q.get('parent'); tasks.unshift(t); return json(200, t); }
   if (req.method === 'PATCH') { Object.assign(task, JSON.parse(body || '{}')); return json(200, task); }
   if (req.method === 'DELETE') { tasks.splice(tasks.indexOf(task), 1); return json(204); }
 }
@@ -194,7 +194,7 @@ await alex.js(`$('#share input[type=email]').focus(); true`);
 await alex.type('Sam@Example.com');
 await alex.js(`$('#share form')[0].requestSubmit(); true`);
 await wait(600);
-check('Sam is invited, and shown as not having opened it yet', await alex.js(`$('#share .people li').map(function() { return $(this).find('.name').text() + ' / ' + $(this).find('.email').text(); }).get()`),
+await eventually('Sam is invited, and shown as not having opened it yet', () => alex.js(`$('#share .people li').map(function() { return $(this).find('.name').text() + ' / ' + $(this).find('.email').text(); }).get()`),
   ['Alex / alex@example.com', 'sam@example.com / Hasn’t opened it yet']);
 check('Alex is offered the link to send', await alex.js(`[$('#message span').text(), $('#message button').text()]`), ['Shared with Sam@Example.com. Send them the link so they know.', 'Copy link']);
 check('the link is to the list', await alex.js(`shared.link('cloud:${listId}')`), base + 'index.html#list=' + listId);
@@ -266,6 +266,21 @@ await eventually('a task moved in from Google Tasks leaves it, and Sam sees it',
 await alex.js(`$('#message button').click(); true`); // Undo
 await eventually('undoing puts it back in Google Tasks, and Sam sees it go', async () => [googleTasks.alex.map(t => t.title), await seen(sam, 'Shopping')],
   [['Call the plumber'], 'Bread, -Butter (salted), -Seeded']);
+
+// A task with subtasks takes them with it
+googleTasks.alex.push({ id: 'gk1', title: 'Get quotes', parent: googleTasks.alex[0].id, status: 'needsAction', position: '1' },
+  { id: 'gk2', title: 'Book one', parent: googleTasks.alex[0].id, status: 'needsAction', position: '2' });
+await alex.js(`reload(cardFor('g1')); true`);
+await eventually('(Alex sees them in Google Tasks)', () => seen(alex, 'My Tasks'), 'Call the plumber, -Get quotes, -Book one');
+await alex.js(`hideMessage(); moveToList($('#cards .card:not(.shared) .todo').filter(function() { return this.value === 'Call the plumber'; }), 'cloud:${listId}'); true`);
+await eventually('a task with subtasks moves into the shared list with them, and Sam sees all three', async () => [googleTasks.alex.map(t => t.title), await seen(sam, 'Shopping')],
+  [[], 'Call the plumber, -Get quotes, -Book one, Bread, -Butter (salted), -Seeded']);
+await alex.js(`$('#message button').click(); true`); // Undo
+await eventually('undoing takes them all back to Google Tasks, still under it', async () => [googleTasks.alex.map(t => t.title + (t.parent ? ' (sub)' : '')).sort(), await seen(sam, 'Shopping')],
+  [['Book one (sub)', 'Call the plumber', 'Get quotes (sub)'], 'Bread, -Butter (salted), -Seeded'], 8000);
+googleTasks.alex.splice(0, googleTasks.alex.length, ...googleTasks.alex.filter(t => !t.parent));
+await alex.js(`reload(cardFor('g1')); true`);
+await wait(300);
 
 // Renaming
 await alex.js(`$('.card.shared .list-title').val('Food shop').trigger('change'); true`);
