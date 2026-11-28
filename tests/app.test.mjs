@@ -103,7 +103,7 @@ await js(`
   window.send = function(method, path, body, done, failed) {
     var got = method === 'GET' && window.answerGet && answerGet(path); // a test's own answer
     if (got) return setTimeout(function() { if (done) done(got); }, 10);
-    if (method === 'PATCH') return setTimeout(function() { if (window.refuse) { if (failed) failed(500); } else if (done) done(body); }, 10); // saving a change
+    if (method === 'PATCH') return setTimeout(function() { if (window.refuse) { if (failed) failed(500); } else if (done) done(body); }, window.patchDelay || 10); // saving a change
     if (method === 'DELETE') return setTimeout(function() {
       var gone = path.split('/').pop();
       server = server.filter(function(t) { return t.id !== gone; });
@@ -909,6 +909,22 @@ await js(`window.refuse = true; $('.done-list .todo').filter(function() { return
 await wait(150);
 check('if Google won’t reopen it, it goes back to Completed, ticked', [(await ticking()).where, (await ticking()).ticked, /Could not update/.test(await js(`$('#message span').text()`))], ['completed', true, true]);
 await js(`window.refuse = false; hideMessage(); tickPause = closeTime = openTime = reopenDelay = 0; true`);
+
+// "Completed" shows, and counts, at once, without waiting for Google
+await reset([{ id: 'k7', title: 'Alpha', position: '1' }, { id: 'k8', title: 'Bravo', position: '2' }]);
+const doneHeader = () => js(`(function() { var d = $('#cards .card').first().find('.done'); return d.is(':visible') ? d.find('.done-toggle').text() : 'hidden'; })()`);
+await js(`var c = $('#cards .card').first(); c.find('.done-list').empty(); c[0].doneTotal = 0; c[0].doneShown = 0; c[0].doneWaiting = []; c[0].pendingDone = {}; updateDoneCount(); window.patchDelay = 1500; true`);
+check('a list with nothing completed shows no Completed', await doneHeader(), 'hidden');
+await js(`$(${rowOf('Alpha')}).children('input[type=checkbox]').click(); true`);
+await wait(50);
+check('ticking shows Completed (1) at once, before Google answers', await doneHeader(), 'Completed (1)');
+await wait(1700);
+check('...and it stays once Google has', await doneHeader(), 'Completed (1)');
+await js(`$('.done-list .todo').filter(function() { return this.value === 'Alpha'; }).siblings('input[type=checkbox]').click(); true`);
+await wait(50);
+check('unticking takes it away at once', await doneHeader(), 'hidden');
+await wait(1700);
+await js(`window.patchDelay = 0; true`);
 
 // ---- The website's sign-in. Logging in gets a one-time code from Google's window,
 // which Tab & Tick Cloud swaps for a token; after that, the cloud renews it quietly.

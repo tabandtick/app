@@ -1017,14 +1017,40 @@ function loadMoreIfNear() {
 }
 
 // "Completed (3)", or nothing at all when there are none, as in Google Tasks. The
-// total is counted by countDone, or known once everything has been loaded.
+// total is counted by countDone, or known once everything has been loaded. A tick or
+// untick changes it at once, as in Google Tasks, without waiting for Google: see
+// expectDone.
 function updateDoneCount() {
   $('#cards .card').each(function() {
-    var loaded = $(this).find('.done-list li').length + this.doneWaiting.length;
-    var total = this.doneShown === doneDays.length ? loaded : this.doneTotal;
+    var el = this, list = $(this).find('.done-list');
+    var loaded = list.children('li').length + el.doneWaiting.length;
+    var all = el.doneShown === doneDays.length, total = all ? loaded : el.doneTotal, change = 0;
+    $.each(el.pendingDone || {}, function(id, p) {
+      var there = list.find('.todo').filter(function() { return this.id === id; }).length > 0;
+      if (!all) change += p.done ? 1 : -1;
+      else if (p.done && !there) change++; // still on its way to the list
+      else if (!p.done && there) change--; // still on its way out
+    });
+    if (typeof total === 'number') total = Math.max(0, total + change);
     $(this).find('.done-toggle').text('Completed' + (typeof total === 'number' ? ' (' + total + ')' : ''));
-    $(this).find('.done').toggle(this.loaded && (total > 0 || loaded > 0));
+    $(this).find('.done').toggle(!!el.loaded && (total > 0 || loaded > 0 || change > 0));
   });
+}
+
+// A task ticked (done) or unticked, counted until Google's count includes it.
+function expectDone(card, id, done) {
+  var el = card && card[0];
+  if (!el) return;
+  (el.pendingDone = el.pendingDone || {})[id] = { done: done, saved: false };
+  updateDoneCount();
+}
+
+function settledDone(card, id, ok) {
+  var el = card && card[0], p = el && el.pendingDone && el.pendingDone[id];
+  if (!p) return;
+  if (ok) p.saved = true; // the next count includes it
+  else delete el.pendingDone[id];
+  updateDoneCount();
 }
 
 // Ask Google how many completed tasks a list has: their ids only, a page at a time.
@@ -1036,13 +1062,14 @@ function countDone(card) {
   var started = session;
   el.countTimer = setTimeout(function() {
     if (started !== session) return; // logged out, or another account, since
-    var count = 0;
+    var count = 0, saved = $.grep(Object.keys(el.pendingDone || {}), function(id) { return el.pendingDone[id].saved; });
     (function page(token) {
       send('GET', 'lists/' + encodeURIComponent(el.list) + '/tasks?showCompleted=true&showHidden=true&maxResults=100&fields=items(id,status),nextPageToken' +
         (token ? '&pageToken=' + encodeURIComponent(token) : ''), null, function(result) {
         count += $.grep((result && result.items) || [], function(task) { return task.status === 'completed' && !isRemoved(task.id); }).length;
         if (result && result.nextPageToken) return page(result.nextPageToken);
         el.doneTotal = count;
+        $.each(saved, function(i, id) { delete el.pendingDone[id]; }); // counted now
         updateDoneCount();
       });
     })();
@@ -1068,6 +1095,7 @@ function sortDone(card) {
   });
   if (all.length) card.find('.done-none').hide();
   refreshRows();
+  updateDoneCount();
 }
 
 // Tick or untick. The row moves between the lists once Google agrees, except that
@@ -1218,6 +1246,8 @@ function setCompleted(checkbox, after, quiet, failed) {
   todo.toggleClass('checked', done);
   if (!id) return; // saveTask sends it once the task exists
   var wasDone = row.parent().is('.done-list'), completedAt = todo[0].completedAt;
+  if (done && !wasDone && row.parent().is('.claire') && !openParent(todo).length) expectDone(card, id, true);
+  else if (!done && wasDone) expectDone(card, id, false);
   // Said at once, as Google Tasks does; a task with open subtasks waits to hear what
   // Google did with them
   var told = !quiet && (!done || !subtaskRows(todo).children('.todo').not('.checked').length);
@@ -1235,6 +1265,7 @@ function setCompleted(checkbox, after, quiet, failed) {
   ticking++;
   api(todo, 'PATCH', '/' + id, done ? { status: 'completed' } : { status: 'needsAction', completed: null }, function(result) {
     ticking--;
+    settledDone(card, id, true);
     if (checkbox.prop('checked') !== done) return; // changed again since
     todo[0].completedAt = done ? (result && result.completed) || new Date().toISOString() : undefined;
     if (todo[0].deleted) return;
@@ -1263,6 +1294,7 @@ function setCompleted(checkbox, after, quiet, failed) {
     if (!here && !done) reload(card); // puts it back in its place, unless more are on the way
   }, function(status) {
     ticking--;
+    settledDone(card, id, false);
     if (row[0].leaving || row.hasClass('leaving')) stopLeaving(row);
     checkbox.prop('checked', !done);
     todo.toggleClass('checked', !done);
