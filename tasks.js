@@ -434,7 +434,7 @@ var PEOPLE = '<svg class="shared-icon" width="18" height="18" viewBox="0 0 20 20
 // Drive's permission is asked for only when you first share, as it isn't needed
 // before. Google's window needs a click, which this is called from.
 function withDrive(then) {
-  if (auth.hasDrive() || shared.inCloud()) return then(); // the server needs no Drive
+  if (auth.hasDrive()) return then();
   auth.drive(function(ok, reason) {
     if (!ok) return showMessage('Shared lists need Google Drive' + (reason ? ' (' + reason + ').' : '.'), null, null, 8000);
     startShared();
@@ -442,8 +442,20 @@ function withDrive(then) {
   });
 }
 
+// A new shared list goes to Tab & Tick's server, which needs no Drive. In the
+// extension, a session with it may need Google's page first; failing that, Drive.
+function forNewShared(then) {
+  if (shared.inCloud()) return then();
+  if (!auth.cloudSession) return withDrive(then);
+  auth.cloudSession(currentAccount(), true, function(ok) {
+    if (!ok) return withDrive(then);
+    startShared();
+    then();
+  });
+}
+
 function askSharedList() {
-  withDrive(function() {
+  forNewShared(function() {
     ask({ title: 'New shared list', text: 'Share it with anyone with a Google account.' + (shared.inCloud() ? '' : ' It’s kept in your Google Drive.'), field: '', placeholder: 'List name', button: 'Create' }, function(title) {
       shared.create(title, [], function(list) {
         addShared(list);
@@ -471,7 +483,7 @@ function offerCopy(id) {
     text: 'Google Tasks can’t share lists, so this makes a shared copy of it, with its open tasks' + (shared.inCloud() ? '' : ', in your Google Drive') + '. The original stays in Google Tasks.',
     button: 'Make a shared copy'
   }, function() {
-    withDrive(function() {
+    forNewShared(function() {
       showMessage('Copying…');
       shared.copy(list, function(copy) {
         hideMessage();
@@ -815,6 +827,9 @@ function loadProfile() {
       currentAccount(profile.email);
       showAccounts();
       if (was !== profile.email) showLists(); // its own hidden lists
+      // In the extension, now it's known who this is, shared lists on Tab & Tick's
+      // server can be looked for
+      if (auth.cloudSession && !shared.inCloud()) startShared();
     });
 }
 

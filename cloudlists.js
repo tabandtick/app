@@ -116,7 +116,14 @@ var cloudLists = (function() {
 
   // Join any lists shared with this account since, then ask which you have. Lists
   // gone since last time (deleted, or you were removed) go from the page.
+  var tried = {}; // accounts whose quiet session was tried, in the extension
+
   function start(done) {
+    var email = currentAccount();
+    if (!available() && auth.cloudSession && email && !tried[email]) {
+      tried[email] = true;
+      return auth.cloudSession(email, false, function() { start(done); });
+    }
     if (!client()) return later(done);
     whoAmI(function() {
       answer(db.rpc('join_lists'), next, next);

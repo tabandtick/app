@@ -9,6 +9,8 @@
 //   has(email)            whether that account has a Tab & Tick session here
 //   signOut(email)        forget it, here and on the server
 //   db(email)             the Supabase client for that account, for shared lists
+//   withIdToken(email, idToken, nonce, done)  a session from Google's ID token, as the
+//                         extension gets one: done(ok)
 // An answer is Google's { access_token, expires_in, scope }.
 
 var cloud = (function() {
@@ -78,6 +80,15 @@ var cloud = (function() {
     },
 
     db: client,
+
+    withIdToken: function(email, idToken, nonce, done) {
+      var c = client(email);
+      if (!c) return done(false);
+      c.auth.signInWithIdToken({ provider: 'google', token: idToken, nonce: nonce }).then(function(result) {
+        if (result.error) console.warn('Tab & Tick Cloud:', result.error.message);
+        done(!result.error);
+      }, function() { done(false); });
+    },
 
     has: function(email) {
       try { return !!(email && localStorage.getItem(storageKey(email))); } catch (e) { return false; }

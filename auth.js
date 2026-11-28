@@ -10,6 +10,8 @@
 // For shared lists:
 //   canShare       whether they can be used here
 //   hasDrive()     whether the token can open them   drive(done)  ask for that
+//   cloudSession(email, interactive, done)  in the extension: a session with Tab &
+//                  Tick's server, for lists kept there (the website gets one on login)
 // done is called with true or false, and the reason if false.
 
 var SCOPE = 'https://www.googleapis.com/auth/tasks';
@@ -90,6 +92,27 @@ function extensionAuth() {
     });
   }
 
+  // A session with Tab & Tick's server, for shared lists kept there: Google's page
+  // gives an ID token saying who you are, which the server checks. The nonce ties
+  // the token to this request.
+  function cloudSession(email, interactive, done) {
+    if (!window.cloud || !email) return done(false);
+    if (cloud.has(email)) return done(true);
+    var raw = Array.prototype.map.call(crypto.getRandomValues(new Uint8Array(16)), function(b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+    crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw)).then(function(hash) {
+      var nonce = Array.prototype.map.call(new Uint8Array(hash), function(b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+      var params = { client_id: CLIENT_ID, response_type: 'id_token', redirect_uri: chrome.identity.getRedirectURL(),
+        scope: 'openid email profile', nonce: nonce, login_hint: email };
+      if (!interactive) params.prompt = 'none';
+      chrome.identity.launchWebAuthFlow({ url: 'https://accounts.google.com/o/oauth2/v2/auth?' + $.param(params), interactive: !!interactive }, function(redirect) {
+        var reason = chrome.runtime.lastError && chrome.runtime.lastError.message;
+        var idToken = new URLSearchParams(((redirect || '').split('#')[1]) || '').get('id_token');
+        if (reason || !idToken) return done(false);
+        cloud.withIdToken(email, idToken, raw, done);
+      });
+    }, function() { done(false); });
+  }
+
   function keep(email) {
     tokens[email] = { token: token, until: until, scope: granted };
     stored('tabandtick-tokens', tokens);
@@ -124,7 +147,11 @@ function extensionAuth() {
       webToken(using, false, done);
     },
     token: function() { return token && until > Date.now() ? token : null; },
-    logout: function() { if (using) token = null; else dropChromeToken(function() {}); },
+    logout: function() {
+      if (window.cloud && hint) cloud.signOut(hint);
+      if (using) token = null;
+      else dropChromeToken(function() {});
+    },
     hint: function(email) { hint = email || ''; },
     canSwitch: true,
     // The token in use is this account's. Chrome's account is the one got from Chrome.
@@ -150,6 +177,7 @@ function extensionAuth() {
       }, true);
     },
     forget: function(email) {
+      if (window.cloud) cloud.signOut(email);
       delete tokens[email];
       stored('tabandtick-tokens', tokens);
       if (email === mainEmail) {
@@ -162,6 +190,7 @@ function extensionAuth() {
       }
     },
     canShare: true,
+    cloudSession: cloudSession,
     hasDrive: function() { return !!token && granted.split(' ').indexOf(DRIVE) >= 0; },
     drive: function(done) {
       var email = using || '';
