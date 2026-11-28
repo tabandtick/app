@@ -128,7 +128,7 @@ const chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0',
   '--no-first-run', '--no-sandbox', '--window-size=1280,900', 'about:blank'], { stdio: 'ignore' });
 const wait = ms => new Promise(r => setTimeout(r, ms));
 let port;
-for (let i = 0; i < 100 && !port; i++) {
+for (let i = 0; i < 300 && !port; i++) { // up to a minute: Chrome can start slowly on GitHub
   try { port = readFileSync(join(dir, 'DevToolsActivePort'), 'utf8').split('\n')[0]; } catch { await wait(200); }
 }
 const KEYS = { ArrowUp: 38, ArrowDown: 40, Tab: 9, Backspace: 8, Enter: 13, Escape: 27, a: 65 };
@@ -170,6 +170,7 @@ async function person(name, hash = '') {
     auth.canShare = true;
     auth.silent = function(done) { done(true); };
     loadProfile = function() {};
+    tickPause = closeTime = openTime = reopenDelay = 0;
     currentAccount('${name}@example.com');
     // Picking the file in Google's picker lets this person open it
     shared.pick = function(id, done) { fetch('${base}grant?user=${name}&id=' + id).then(function() { done(id); }); };

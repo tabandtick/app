@@ -766,6 +766,9 @@ $(document).ready(function() {
 			renderMeta(row);
 			saveSoon(row.children('.todo'));
 		})
+		// Pressing the circle doesn't take the focus: if it did, the task being edited would
+		// close up (or go, if empty), moving the circle before the click lands
+		.on('mousedown', 'ul.list input[type=checkbox]', function(event) { event.preventDefault(); })
 		.on('change', 'ul.list input[type=checkbox]', function() {
 			var todo = $(this).siblings('.todo');
 			if (todo.attr('id') || todo.val() || todo[0].saving) return setCompleted($(this));

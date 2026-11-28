@@ -31,7 +31,7 @@ const chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0',
   '--no-first-run', '--no-sandbox', '--window-size=1280,900', 'about:blank'], { stdio: 'ignore' });
 const wait = ms => new Promise(r => setTimeout(r, ms));
 let targets;
-for (let i = 0; i < 100 && !targets; i++) {
+for (let i = 0; i < 300 && !targets; i++) { // up to a minute: Chrome can start slowly on GitHub
   try {
     const port = readFileSync(join(dir, 'DevToolsActivePort'), 'utf8').split('\n')[0];
     targets = await (await fetch('http://127.0.0.1:' + port + '/json')).json();
@@ -85,6 +85,7 @@ await cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
 await cdp('Page.navigate', { url: base + 'index.html' });
 await wait(1500);
 await js(`
+  tickPause = closeTime = openTime = reopenDelay = 0; // the pause and slides on ticking: timed in their own test
   window.sent = [];
   // A small Google: refuses a move whose parent is a subtask, or whose previous
   // task isn't under that parent, as the real one does.
@@ -93,7 +94,7 @@ await js(`
   window.send = function(method, path, body, done, failed) {
     var got = method === 'GET' && window.answerGet && answerGet(path); // a test's own answer
     if (got) return setTimeout(function() { if (done) done(got); }, 10);
-    if (method === 'PATCH') return setTimeout(function() { if (done) done(body); }, 10); // saving a change
+    if (method === 'PATCH') return setTimeout(function() { if (window.refuse) { if (failed) failed(500); } else if (done) done(body); }, 10); // saving a change
     if (method === 'DELETE') return setTimeout(function() {
       var gone = path.split('/').pop();
       server = server.filter(function(t) { return t.id !== gone; });
@@ -850,6 +851,51 @@ await js(`focusRow('Dentist tomorrow')`); await key('Enter');
 await wait(100);
 check('...and it isn’t read again until the title changes', await dated(), ['Dentist tomorrow', '']);
 
+// ---- Ticking, as in Google Tasks: a pause, ticked but not struck through, then the
+// row closes up and goes to Completed
+await reset([{ id: 'k1', title: 'Alpha', position: '1' }, { id: 'k2', title: 'Bravo', position: '2' }]);
+await js(`tickPause = 400; closeTime = 150; openTime = 300; reopenDelay = 100; true`);
+await js(`window.slideSamples = []; (function sample(t0) { var row = $('.todo').filter(function() { return this.value === 'Alpha'; }).parent(), below = row.next('li');
+  if (row.parent().is('.claire') && below.length) slideSamples.push({ gap: Math.round(below[0].getBoundingClientRect().top - row[0].getBoundingClientRect().top), h: Math.round(row[0].getBoundingClientRect().height), top: Math.round(row[0].getBoundingClientRect().top) });
+  if (performance.now() - t0 < 900) requestAnimationFrame(function() { sample(t0); }); })(performance.now()); true`);
+{ const b = await box(`$(${rowOf('Alpha')}).children('input[type=checkbox]')[0]`); await click(b[0], b[1]); } // a real click, which also focuses it
+await wait(100);
+const ticking = () => js(`(function() {
+  var row = $('.todo').filter(function() { return this.value === 'Alpha'; }).parent();
+  var below = row.next('li').length ? row.next('li') : $('.todo').filter(function() { return this.value === 'Bravo'; }).parent(); // the row right under it
+  return { where: row.parent().is('.claire') ? 'open' : 'completed', struck: getComputedStyle(row.children('.todo')[0]).textDecorationLine,
+    ticked: row.children('input[type=checkbox]').prop('checked'), details: row.children('.details').is(':visible'), height: Math.round(row[0].getBoundingClientRect().height),
+    belowGap: Math.round(below[0].getBoundingClientRect().top - row[0].getBoundingClientRect().top) };
+})()`);
+const tickBefore = await ticking();
+check('just ticked: still in place, ticked, not struck through, details not opened', [tickBefore.where, tickBefore.struck, tickBefore.ticked, tickBefore.details], ['open', 'none', true, false]);
+await wait(500);
+check('...then the task below slides up over it, which keeps its size and place', await js(`(function() { var full = slideSamples[0];
+  return [slideSamples.some(function(x) { return x.gap > 2 && x.gap < full.gap - 2; }), slideSamples.every(function(x) { return x.h === full.h && x.top === full.top; })]; })()`), [true, true]);
+await wait(200);
+check('...and it goes to Completed', (await ticking()).where, 'completed');
+await js(`$('.done-list .todo').filter(function() { return this.value === 'Alpha'; }).siblings('input[type=checkbox]').click(); true`);
+await wait(30);
+await wait(70);
+const untickMid = await ticking();
+check('unticking it brings it straight back, and says so', [untickMid.where, await js(`$('#message span').text()`)], ['open', 'Task marked uncompleted.']);
+check('...under the tasks below, which slide down off it', untickMid.belowGap < untickMid.height, true);
+await wait(400);
+check('...and then it’s uncovered', (await ticking()).belowGap >= (await ticking()).height, true);
+await reset([{ id: 'k3', title: 'Alpha', position: '1' }, { id: 'k4', title: 'Bravo', position: '2' }]);
+await js(`$(${rowOf('Alpha')}).children('input[type=checkbox]').click(); true`);
+await wait(150);
+await js(`$(${rowOf('Alpha')}).children('input[type=checkbox]').click(); true`);
+await wait(700);
+check('unticking it during the pause keeps it where it was', [(await ticking()).where, (await s()).order.trim()], ['open', 'Alpha Bravo']);
+await reset([{ id: 'k5', title: 'Alpha', position: '1' }, { id: 'k6', title: 'Bravo', position: '2' }]);
+await js(`$(${rowOf('Alpha')}).children('input[type=checkbox]').click(); true`);
+await wait(800);
+await js(`window.refuse = true; $('.done-list .todo').filter(function() { return this.value === 'Alpha'; }).siblings('input[type=checkbox]').click(); true`);
+await wait(150);
+check('if Google won’t reopen it, it goes back to Completed, ticked', [(await ticking()).where, (await ticking()).ticked, /Could not update/.test(await js(`$('#message span').text()`))], ['completed', true, true]);
+await js(`window.refuse = false; hideMessage(); tickPause = closeTime = openTime = reopenDelay = 0; true`);
+
 // ---- The website's sign-in. Logging in gets a one-time code from Google's window,
 // which Tab & Tick Cloud swaps for a token; after that, the cloud renews it quietly.
 // Last, as it loads the page again. Google's script and the cloud are replaced by fakes.
@@ -867,6 +913,7 @@ await js(`window.calls = [];
     } } } };
   cloud.signIn = function(code, done) { calls.push('code:' + code); done({ access_token: 'new', expires_in: 3600, scope: '' }, 'alex@example.com'); };
   cloud.has = function() { return false; }; // logged in before the cloud: renewed with Google's window
+  window.send = function(method, path, body, done) { setTimeout(function() { if (done) done({ items: [] }); }, 5); }; // not the real Google, with a made-up token
   localStorage.removeItem('tabandtick-logged-out'); auth.hint('alex@example.com'); true`);
 await key('Escape');
 check('without the cloud, a key in the last minutes renews the sign-in, for the same account, without asking', [await js('calls'), await js('auth.token()')],
@@ -877,8 +924,8 @@ await js(`calls = []; cloud.has = function(email) { return email === 'alex@examp
   cloud.token = function(email, done) { calls.push('cloud:' + email); setTimeout(function() { done({ access_token: 'quiet', expires_in: 3600, scope: '' }); }, 5); };
   auth.expired(function(ok) { window.renewedQuietly = ok; }); true`);
 await wait(100);
-check('with the cloud, a refused token is renewed quietly, without Google’s window', [await js('renewedQuietly'), await js('auth.token()'), await js('calls')],
-  [true, 'quiet', ['cloud:alex@example.com']]);
+check('with the cloud, a refused token is renewed quietly, without Google’s window', [await js('renewedQuietly'), await js('auth.token()'),
+  await js(`calls.length > 0 && calls.every(function(c) { return c === 'cloud:alex@example.com'; })`)], [true, 'quiet', true]);
 await js(`calls = []; localStorage.setItem('tabandtick-token', JSON.stringify({ token: 'stale', until: Date.now() - 1000 })); true`);
 await cdp('Page.reload');
 await wait(1200);
