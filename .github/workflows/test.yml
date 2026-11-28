@@ -25,5 +25,11 @@ jobs:
         run: supabase start -x studio,storage-api,imgproxy,edge-runtime,logflare,vector,mailpit,supavisor,postgres-meta
       - name: Check its rules
         run: docker exec -i supabase_db_tabandtick psql -U postgres -v ON_ERROR_STOP=1 -q -o /dev/null < supabase/tests/shared_lists.sql
+      # The sync that keeps shared lists matched across everyone's Google Tasks
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Test the sync
+        run: deno test -A supabase/tests/copies.test.ts
       - name: Run the tests
         run: node tests/app.test.mjs && node tests/shared.test.mjs

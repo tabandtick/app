@@ -979,7 +979,7 @@ check('opening it after the hour, it signs in again quietly', [await js('silentO
 await js(`localStorage.setItem('tabandtick-logged-out', '1'); true`);
 await cdp('Page.reload');
 await wait(1200);
-check('cloud.js: signs in with the code, keeps a session, renews, and signs out', await js(`(function() {
+check('cloud.js: signs in with the code, keeps a session, renews, syncs a shared list, and signs out', await js(`(function() {
   var posted = [], stored = {};
   var payload = btoa(JSON.stringify({ email: 'kim@example.com', sub: '42' })).replace(/=+$/, '');
   window.fetch = function(url, options) {
@@ -988,6 +988,7 @@ check('cloud.js: signs in with the code, keeps a session, renews, and signs out'
     var answers = {
       'google-sign-in': [200, { access_token: 'g1', expires_in: 3600, scope: 's', id_token: 'h.' + payload + '.sig', kept: true }],
       'google-token': [200, { access_token: 'g2', expires_in: 3600, scope: 's' }],
+      'google-copies': [200, { state: 'on', tasklist: 'T1' }],
       'google-sign-out': [200, { ok: true }]
     }[name];
     return Promise.resolve(new Response(JSON.stringify(answers[1]), { status: answers[0] }));
@@ -1004,15 +1005,17 @@ check('cloud.js: signs in with the code, keeps a session, renews, and signs out'
     cloud.signIn('code-9', function(answer, email) {
       var had = cloud.has('kim@example.com');
       cloud.token(email, function(fresh) {
-        cloud.signOut(email);
-        setTimeout(function() {
-          resolve([answer.access_token, email, stored.idToken, had, fresh.access_token, cloud.has('kim@example.com'), posted]);
-        }, 50);
+        cloud.syncCopy(email, 'L1', function(synced) {
+          cloud.signOut(email);
+          setTimeout(function() {
+            resolve([answer.access_token, email, stored.idToken, had, fresh.access_token, synced.tasklist, cloud.has('kim@example.com'), posted]);
+          }, 50);
+        });
       });
     });
   });
-})()`), ['g1', 'kim@example.com', true, true, 'g2', false,
-  ['google-sign-in key {"code":"code-9"}', 'google-token session {}', 'google-sign-out session {}']]);
+})()`), ['g1', 'kim@example.com', true, true, 'g2', 'T1', false,
+  ['google-sign-in key {"code":"code-9"}', 'google-token session {}', 'google-copies session {"list":"L1"}', 'google-sign-out session {"forget":false}']]);
 
 // ---- More than one Google account. A fake Google: its window gives the account asked
 // for, or, when choosing, the one the test says; each account has its own lists. A fake
@@ -1084,7 +1087,7 @@ check('logging out of the last shows Log in', [await js(`$('#authorize-div').is(
 // extensions. A fake of both: Chrome's is main@, and Google's page answers with the
 // account asked for, or when choosing, the one the test says; prompt=none fails if told to.
 const fakeChrome = await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `
-  window.flows = []; window.chooseNext = ''; window.googleSession = true; window.chromeCalls = []; window.idFlows = [];
+  window.flows = []; window.chooseNext = ''; window.googleSession = true; window.chromeCalls = []; window.idFlows = []; window.codeFlows = [];
   window.chrome = { runtime: {}, identity: {
     getAuthToken: function(options, done) {
       chromeCalls.push((options.interactive ? 'ask ' : 'silent ') + options.scopes.length);
@@ -1095,6 +1098,10 @@ const fakeChrome = await cdp('Page.addScriptToEvaluateOnNewDocument', { source: 
     getRedirectURL: function() { return 'https://fake.chromiumapp.org/'; },
     launchWebAuthFlow: function(options, done) {
       var q = new URLSearchParams(options.url.split('?')[1]);
+      if (q.get('response_type') === 'code') { // for the server's permission to keep shared lists in Google Tasks
+        codeFlows.push([q.get('prompt'), q.get('access_type'), q.get('login_hint')]);
+        return setTimeout(function() { done('https://fake.chromiumapp.org/?code=code-' + q.get('login_hint')); }, 5);
+      }
       if (q.get('response_type') === 'id_token') { // for a session with Tab & Tick's server
         idFlows.push({ how: (q.get('prompt') || 'ask') + ' ' + q.get('login_hint'), scope: q.get('scope'), nonce: q.get('nonce'), client: q.get('client_id') });
         return setTimeout(function() { done('https://fake.chromiumapp.org/#id_token=id-' + q.get('login_hint')); }, 5);
@@ -1133,6 +1140,11 @@ check('the extension signs in with Chrome’s account, without asking', [await e
 check('and offers to add another, and to share', await js(`[$('body').hasClass('can-switch'), $('body').hasClass('can-share')]`), [true, true]);
 check('it asks Google, quietly, who it is, for a session with Tab & Tick’s server', await js(`idFlows.map(function(f) { return [f.how, f.scope, f.client === CLIENT_ID]; })`), [['none main@example.com', 'openid email profile', true]]);
 check('and hands that to the server, with the nonce Google was given', await js(`idTokens.map(function(t) { return [t.email, t.idToken, t.hashed === idFlows[0].nonce]; })`), [['main@example.com', 'id-main@example.com', true]]);
+await js(`window.allowed = []; cloud.allow = function(code, redirect, done) { allowed.push([code, redirect]); done(true); };
+  auth.allowServer('main@example.com', function(ok) { window.allowOk = ok; }); true`);
+await wait(100);
+check('allowing the server to keep shared lists in Google Tasks asks Google for a code, which the server swaps', [await js('allowOk'), await js('codeFlows'), await js('allowed')],
+  [true, [['consent', 'offline', 'main@example.com']], [['code-main@example.com', 'https://fake.chromiumapp.org/']]]);
 await js(`chooseNext = 'work@example.com'; $('#add-account').click(); true`);
 await wait(500);
 check('adding one goes through Google’s page, choosing the account', [await ext(), await js('flows')], [{ lists: 'work’s list', me: 'work@example.com', others: ['main@example.com'] }, ['select_account -']]);

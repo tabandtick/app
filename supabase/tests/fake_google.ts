@@ -90,7 +90,7 @@ export class FakeGoogle {
 
     // users/@me/lists[/id]
     if (parts[0] === 'users') {
-      const id = parts[3];
+      const id = parts[3] === '@default' ? [...lists.keys()][0] : parts[3];
       if (!id && method === 'GET') return answer(200, { items: [...lists.values()].map(listOf) });
       if (!id && method === 'POST') {
         const list: List = { id: 'L' + ++this.made, title: body.title, updated: this.now(), tasks: new Map(), order: new Map() };
@@ -136,6 +136,20 @@ export class FakeGoogle {
     const t = list.tasks.get(taskId);
     if (!t || (t.deleted && method !== 'GET')) return notFound();
     if (parts[4] === 'move' && method === 'POST') {
+      const to = q.get('destinationTasklist');
+      if (to && to !== list.id) { // to another list: with its subtasks, as a new task there
+        const other = lists.get(to);
+        if (!other) return notFound();
+        for (const x of [t, ...[...list.tasks.values()].filter((k) => k.parent === t.id)]) {
+          this.unplace(list, x);
+          list.tasks.delete(x.id);
+          other.tasks.set(x.id, x);
+          x.updated = this.now();
+          if (x !== t) this.place(other, x, x.parent, [...(other.order.get(x.parent!) || [])].pop());
+        }
+        this.place(other, t, q.get('parent') || undefined, q.get('previous') || undefined);
+        return answer(200, this.taskOf(other, t));
+      }
       this.unplace(list, t);
       this.place(list, t, q.get('parent') || undefined, q.get('previous') || undefined);
       return answer(200, this.taskOf(list, t)); // updated doesn't change

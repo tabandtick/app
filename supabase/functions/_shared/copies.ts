@@ -378,8 +378,12 @@ async function sync(d: Deps, c: Copy, g: G, asked: boolean) {
       continue;
     }
     if (t.deleted || t.hidden || fromGoogle.has(t.id)) continue;
+    bringIn(t);
+  }
+
+  // New in Google: into the hub, placed below with the order
+  function bringIn(t: GTask) {
     googleChanged = true;
-    // New in Google: into the hub, placed below with the order
     const parent = t.parent ? byGoogle.get(t.parent)?.task_id ?? fromGoogle.get(t.parent) ?? null : null;
     const f = ofGoogle(t);
     const id = newId();
@@ -390,11 +394,35 @@ async function sync(d: Deps, c: Copy, g: G, asked: boolean) {
     byGoogle.set(t.id, link);
     handled.add(id);
   }
+
   // What changed only in the hub
   for (const l of [...links.values()]) {
     if (handled.has(l.task_id) || !l.google_id) continue;
     const h = hub.get(l.task_id);
     if (!h || h.deleted_at || !same(ofHub(h), l.base)) settle(l, null, h);
+  }
+
+  // ---- Order. Google doesn't say when something moves, so its order is read when
+  // anything changed, when someone's waiting, and every few minutes. Moving a task to
+  // another list doesn't say so either: it's just gone, or there.
+  const moved = (h: Hub, l: Link) => !!l.base.pos && (h.parent !== l.base.parent || h.position !== l.base.pos);
+  const hubMoved = [...links.values()].some((l) => { const h = hub.get(l.task_id); return h && !h.deleted_at && moved(h, l); });
+  const unmade = [...hub.values()].some((h) => !h.deleted_at && !links.get(h.id)?.google_id);
+  const readOrder = !made && (fresh || asked || googleChanged || write.size > 0 || patches.size > 0 || deletes.size > 0 ||
+    unmade || hubMoved || !c.order_seen || Date.now() - time(c.order_seen) > ORDER_EVERY);
+  const open = readOrder ? await readTasks(g, tasklist, 'showCompleted=false') : [];
+  if (readOrder) {
+    const seen = new Set(changed.map((t) => t.id)), there = new Set(open.map((t) => t.id));
+    // Moved here from another list
+    for (const t of open.filter((x) => !x.parent).concat(open.filter((x) => x.parent))) {
+      if (!byGoogle.has(t.id) && !fromGoogle.has(t.id) && !t.deleted && !t.hidden) bringIn(t);
+    }
+    // Moved away to another list: as if deleted there
+    for (const l of [...links.values()]) {
+      if (!l.google_id || there.has(l.google_id) || seen.has(l.google_id) || unlink.has(l.task_id)) continue;
+      if (l.base.status !== 'needsAction' || !l.base.pos) continue; // completed (not in open tasks), or new
+      settle(l, { id: l.google_id, deleted: true, updated: now }, hub.get(l.task_id));
+    }
   }
   for (const id of unlink) links.delete(id);
   // New in the hub, or to make again: into Google, below
@@ -405,14 +433,6 @@ async function sync(d: Deps, c: Copy, g: G, asked: boolean) {
     if (!l) links.set(h.id, { task_id: h.id, google_id: null, base: { ...ofHub(h), parent: h.parent, pos: h.position } });
     if (!links.get(h.id)!.google_id) toMake.add(h.id);
   }
-
-  // ---- Order. Google doesn't say when something moves, so its order is read when
-  // anything changed, when someone's waiting, and every few minutes.
-  const moved = (h: Hub, l: Link) => !!l.base.pos && (h.parent !== l.base.parent || h.position !== l.base.pos);
-  const hubMoved = [...links.values()].some((l) => { const h = hub.get(l.task_id); return h && !h.deleted_at && moved(h, l); });
-  const readOrder = !made && (fresh || asked || googleChanged || write.size > 0 || patches.size > 0 || deletes.size > 0 ||
-    toMake.size > 0 || hubMoved || !c.order_seen || Date.now() - time(c.order_seen) > ORDER_EVERY);
-  const open = readOrder ? await readTasks(g, tasklist, 'showCompleted=false') : [];
   const hubOf = (googleId?: string) => (googleId ? byGoogle.get(googleId)?.task_id ?? fromGoogle.get(googleId) : undefined);
   const live = (id?: string | null) => { const h = id ? hub.get(id) : undefined; return h && !h.deleted_at ? h : undefined; };
 

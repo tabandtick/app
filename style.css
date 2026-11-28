@@ -633,6 +633,20 @@ body:not(.can-share) .share-only {
   width: min(440px, calc(100vw - 32px));
 }
 
+/* Whether the shared list is in your Google Tasks */
+#share .copy-state {
+  margin: -4px 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+#share .copy-state button {
+  padding: 0;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 13px;
+}
+
 .share-add {
   display: flex;
   gap: 8px;
